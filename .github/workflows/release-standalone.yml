@@ -1,7 +1,9 @@
 # =============================================================================
 # Release standalone tarball — P3-T02 (App Shell v2, cli-tooling persona)
 #
-# Manual-release channel for the one-command OSS install (`npx @livefolio/cli`).
+# Manual-release channel for the one-command OSS install
+# (`npx @livefolio-cloud/cli` — the @livefolio scope belongs to an
+# unrelated project, never point users at it).
 # The CLI is a tiny npm launcher; the actual app ships as this release tarball.
 # Human-side steps are documented in the NPM publishing runbook, Part 7.
 #
