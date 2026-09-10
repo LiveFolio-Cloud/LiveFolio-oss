@@ -161,15 +161,46 @@ PRs and issues are welcome and are folded back upstream.
 
 ## Need more than local?
 
-LiveFolio Cloud is the hosted edition of the same product — public profiles,
-an Explore marketplace that sells your folios, teams and workspaces,
-Slack/Discord connectors, custom domains, and managed hosting. Same MCP
-protocol, so your agents and workflows move over unchanged.
+Everything above runs on your machine, forever, for free. When you want your
+work to reach people — and to earn from it — **LiveFolio Cloud** is the hosted
+edition of the same product.
+
+### Get discovered in Explore
+
+Publishing locally means sharing a link. Publishing on Cloud means being
+**found**. Every folio you make public can be listed in **Explore** — the
+marketplace where people browse, preview, and buy interactive HTML that
+others have built. Your work gets a home page, a profile, and an audience
+instead of a URL that lives in a chat thread.
+
+- List folios publicly with a one-step listing consent
+- Get reactions, comments, and follower counts on your profile
+- Rank and surface by what people actually open
+
+### Sell your folios
+
+Turn any folio into a product without leaving the editor. Set a price, gate
+the content, and get paid — the same folio you built locally, sold from a
+hosted page that handles delivery and access for you.
+
+- **Paid access** — one-time purchase, per folio or per workspace
+- **Paywall and preview** — first-page preview, blurred gate, or timed trial
+- **Stripe Connect** — connect your account and receive payouts directly
+- **Earnings dashboard** — sales, net earnings, and per-folio revenue
+- **Buyer licenses** — clear terms, with copy/duplication controls you set
+
+### Plus the team layer
+
+Team workspaces and roles, Slack/Discord connectors, custom domains,
+per-viewer analytics, and managed hosting that scales past your laptop.
+
+Same MCP protocol end to end — your agents and workflows move over with zero
+migration.
 
 [![LiveFolio Cloud](assets/screenshots/cloud-og.png)](https://livefolio.cloud)
 
-**→ [livefolio.cloud](https://livefolio.cloud)** — start free, upgrade when
-you outgrow your laptop.
+**→ [livefolio.cloud](https://livefolio.cloud)** — start free, explore what
+others are building, and publish your first paid folio.
 
 ---
 
