@@ -110,7 +110,7 @@ export function BillingSection() {
                 </div>
                 <p className="text-[11px] leading-relaxed text-ink/45">
                   Need SSO, audit or dedicated infrastructure?{' '}
-                  <a href="mailto:hello@livefolio.io" className="font-semibold text-[var(--app-accent)]">Enterprise — contact us</a>
+                  <a href="mailto:hello@livefolio.cloud" className="font-semibold text-[var(--app-accent)]">Enterprise — contact us</a>
                 </p>
                 {plan === 'Team' ? (
                   <div className="flex items-center justify-between">

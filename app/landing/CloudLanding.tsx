@@ -520,7 +520,7 @@ export default function CloudLanding() {
             The built-in AI assistant has message allowances on each plan — but connect your own agent (Claude, GPT, Cursor, any MCP client) and it publishes <span className="text-[#F4F4F0]/70 font-medium">unlimited folios</span> on every plan.
           </p>
           <p className="mt-2 text-center text-[13px] text-[#F4F4F0]/40">
-            Need SSO or custom domains? <a href="mailto:hello@livefolio.io" className="text-[#FF3B00] hover:underline font-semibold">Contact us</a>
+            Need SSO or custom domains? <a href="mailto:hello@livefolio.cloud" className="text-[#FF3B00] hover:underline font-semibold">Contact us</a>
           </p>
         </div>
       </section>
