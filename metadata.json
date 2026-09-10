@@ -1,0 +1,12 @@
+{
+  "name": "LiveFolio",
+  "description": "Multi-page interactive HTML mockup builder, presentation workshop, and cooperative Gemini AI co-creation sandbox.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

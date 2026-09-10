@@ -1,0 +1,243 @@
+/* ── Docs content typography — v2 design language ─────────────────────────── */
+.docs-content {
+  color: rgba(15, 15, 13, 0.7);
+  line-height: 1.75;
+}
+
+.dark .docs-content {
+  color: rgba(244, 244, 240, 0.7);
+}
+
+.docs-content h2 {
+  font-family: 'Cabinet Grotesk', 'Space Grotesk', sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  font-size: 1.5rem;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  color: #0F0F0D;
+  scroll-margin-top: 6rem;
+}
+
+.dark .docs-content h2 {
+  color: #F4F4F0;
+}
+
+.docs-content h3 {
+  font-family: 'Cabinet Grotesk', 'Space Grotesk', sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  font-size: 1.125rem;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  color: #0F0F0D;
+  scroll-margin-top: 6rem;
+}
+
+.dark .docs-content h3 {
+  color: #F4F4F0;
+}
+
+.docs-content h4 {
+  font-family: 'Cabinet Grotesk', 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-size: 0.9375rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: #0F0F0D;
+  scroll-margin-top: 6rem;
+}
+
+.dark .docs-content h4 {
+  color: #F4F4F0;
+}
+
+.docs-content p {
+  font-size: 0.875rem;
+  line-height: 1.7;
+  margin-bottom: 1rem;
+  color: rgba(15, 15, 13, 0.7);
+}
+
+.dark .docs-content p {
+  color: rgba(244, 244, 240, 0.7);
+}
+
+.docs-content a {
+  color: #FF3B00;
+  text-decoration: none;
+}
+
+.docs-content a:hover {
+  text-decoration: underline;
+}
+
+.docs-content strong {
+  color: #0F0F0D;
+  font-weight: 600;
+}
+
+.dark .docs-content strong {
+  color: #F4F4F0;
+}
+
+.docs-content code {
+  font-size: 0.8125rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: rgba(15, 15, 13, 0.06);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.375rem;
+  color: #0F0F0D;
+}
+
+.dark .docs-content code {
+  background: rgba(244, 244, 240, 0.1);
+  color: #F4F4F0;
+}
+
+.docs-content pre {
+  background: #0A0A09;
+  border: 1px solid rgba(244, 244, 240, 0.1);
+  border-radius: 16px;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+  margin-bottom: 1.25rem;
+}
+
+.docs-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.8125rem;
+  color: rgba(244, 244, 240, 0.85);
+}
+
+.docs-content ul,
+.docs-content ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.docs-content li {
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: rgba(15, 15, 13, 0.7);
+  margin-bottom: 0.25rem;
+}
+
+.dark .docs-content li {
+  color: rgba(244, 244, 240, 0.7);
+}
+
+.docs-content table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-bottom: 1.5rem;
+  font-size: 0.8125rem;
+  background: #ffffff;
+  border: 1px solid rgba(15, 15, 13, 0.08);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.dark .docs-content table {
+  background: #171714;
+  border-color: rgba(244, 244, 240, 0.1);
+}
+
+/* Header row — first row with <th> */
+.docs-content tr:first-child th {
+  text-align: left;
+  font-weight: 700;
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid rgba(15, 15, 13, 0.08);
+  border-right: 1px solid rgba(15, 15, 13, 0.05);
+  color: rgba(15, 15, 13, 0.5);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(15, 15, 13, 0.02);
+}
+
+.docs-content tr:first-child th:last-child {
+  border-right: none;
+}
+
+.dark .docs-content tr:first-child th {
+  border-color: rgba(244, 244, 240, 0.1);
+  color: rgba(244, 244, 240, 0.5);
+  background: rgba(244, 244, 240, 0.02);
+}
+
+.docs-content td {
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid rgba(15, 15, 13, 0.05);
+  border-right: 1px solid rgba(15, 15, 13, 0.05);
+  color: rgba(15, 15, 13, 0.7);
+  vertical-align: top;
+}
+
+.docs-content td:last-child {
+  border-right: none;
+}
+
+.dark .docs-content td {
+  border-color: rgba(244, 244, 240, 0.08);
+  color: rgba(244, 244, 240, 0.7);
+}
+
+.docs-content tr:last-child td {
+  border-bottom: none;
+}
+
+/* Zebra striping on data rows */
+.docs-content tr:nth-child(even) td {
+  background: rgba(15, 15, 13, 0.015);
+}
+
+.dark .docs-content tr:nth-child(even) td {
+  background: rgba(244, 244, 240, 0.02);
+}
+
+.docs-content tr:hover td {
+  background: rgba(255, 59, 0, 0.04);
+}
+
+.dark .docs-content tr:hover td {
+  background: rgba(255, 59, 0, 0.06);
+}
+
+.docs-content blockquote {
+  padding: 0.875rem 1.125rem;
+  margin-bottom: 1.25rem;
+  color: rgba(15, 15, 13, 0.7);
+  background: rgba(255, 59, 0, 0.08);
+  border-left: 2px solid #FF3B00;
+  border-radius: 12px;
+}
+
+.dark .docs-content blockquote {
+  color: rgba(244, 244, 240, 0.7);
+}
+
+.docs-content hr {
+  border: none;
+  border-top: 1px solid rgba(15, 15, 13, 0.08);
+  margin: 2rem 0;
+}
+
+.dark .docs-content hr {
+  border-color: rgba(244, 244, 240, 0.1);
+}
+
+.docs-content img {
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 15, 13, 0.08);
+  margin: 1.25rem 0;
+}
+
+.dark .docs-content img {
+  border-color: rgba(244, 244, 240, 0.1);
+}

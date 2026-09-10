@@ -1,0 +1,71 @@
+# Next.js and React build outputs
+.next/
+out/
+build/
+tsconfig.tsbuildinfo
+
+# Standalone release packaging output (bin/package-standalone.js)
+dist/
+
+# Node dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Local flat-file databases & backups
+database*.json
+database*.json.lock
+database.json.lock
+localhost.har
+verify_html_nesting.py.log
+
+# System files and local caches
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# Environment secrets and credentials (MANDATORY under PRIVACY GUARD)
+.env
+.env*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.pub
+
+# Agentic Build — auto-generated dashboard (status.json + phase specs are tracked)
+build-hubs/*/PLAN.html
+
+# AI agent caches and local states
+.agents/
+.claude/awesome-design-md/
+.aider.chat.history.md
+.aider.input.history
+skills-lock.json
+recovery_*.txt
+recovered_*.txt
+scratch/
+
+# Runtime secrets generated locally (MCP keys, tunnel config)
+settings.json
+
+.mcp.json
+ghostty
+supabase/.temp/cli-latest
+/build-hubs
+/build-hubs
+/build-hubs/unified-folio-creation
+/skills/whatsapp-video-mockup
+/videos
+/.impeccable
+/.clawhub

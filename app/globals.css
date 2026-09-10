@@ -1,0 +1,504 @@
+@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,900,500,700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Cormorant+Garamond:ital,wght@1,400;1,500&display=swap");
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-amber-850: #7c2d12;
+
+  /* shadcn/ui Standard Radius */
+  --radius: 0.5rem;
+
+  /* ── Semantic Color Tokens ─────────────────────────────── */
+  --color-surface: #FAFAFA;          /* page background */
+  --color-foreground: #09090b;       /* primary text (zinc-950) */
+  --color-muted: #71717a;            /* secondary text (zinc-500) */
+  --color-border: #e4e4e7;           /* border (zinc-200) */
+  --color-card: #ffffff;             /* card background */
+  --color-accent: #6366F1;           /* accent (indigo-500) */
+  --color-destructive: #ef4444;      /* destructive (red-500) */
+}
+
+/* ── App Shell scope ──────────────────────────────────────────────────────
+ * The single-screen shell (/app) is a cleaner skin of the product: soft
+ * corners, hairline borders, and a calmer accent than the landing's
+ * vermillion. Components reference `var(--app-accent)` so the shell accent
+ * is a one-line brand decision. Indigo #6366F1 — the product's own
+ * dominant warm-amber design-system token. */
+/* --app-accent lives on :root so it can NEVER go out of scope: scoped
+ * redefinitions on .app-shell / .lf-tokens are redundant but harmless, and
+ * any surface that forgets its token scope still gets orange buttons. */
+:root {
+  --app-accent: #ff3b00;
+  /* --lf-accent: the public-surface accent (share viewer, public profiles).
+   * Share/profile pages override it inline from the creator's choice;
+   * the :root default keeps it in scope everywhere else. */
+  --lf-accent: #ff3b00;
+}
+.app-shell {
+  --app-accent: #ff3b00;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* Safe-area padding for notched devices */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-foreground);
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html.dark body {
+    background-color: #030712; /* zinc-950/gray-950 */
+    color: #f9fafb; /* gray-50 */
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    color: #09090b;
+  }
+
+  html.dark h1, html.dark h2, html.dark h3, html.dark h4, html.dark h5, html.dark h6 {
+    color: #f9fafb;
+  }
+
+  .font-heading {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  /* Global focus-visible baseline for interactive elements */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #FF3B00;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Inputs/buttons with custom rings keep their own style */
+  input[class*="focus-visible:"]:focus-visible,
+  button[class*="focus-visible:"]:focus-visible {
+    outline: revert;
+    outline-offset: revert;
+    border-radius: revert;
+  }
+}
+
+/* shadcn-inspired Utility Classes */
+@layer components {
+  .btn-primary {
+    @apply bg-zinc-900 text-zinc-50 hover:bg-zinc-900/90 rounded-md px-4 py-2 text-sm font-medium transition-colors shadow-sm;
+  }
+  
+  .btn-secondary {
+    @apply bg-zinc-100 text-zinc-900 hover:bg-zinc-100/80 rounded-md px-4 py-2 text-sm font-medium transition-colors;
+  }
+
+  .btn-outline {
+    @apply border border-zinc-200 bg-transparent hover:bg-zinc-100 hover:text-zinc-900 rounded-md px-4 py-2 text-sm font-medium transition-colors shadow-sm;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-zinc-100 hover:text-zinc-900 rounded-md px-4 py-2 text-sm font-medium transition-colors;
+  }
+
+  .card-shadcn {
+    @apply rounded-xl border border-zinc-200 bg-white text-zinc-950 shadow-sm;
+  }
+
+  .glass-premium {
+    @apply bg-white/80 backdrop-blur-xl border border-zinc-200 shadow-lg;
+  }
+
+  /* Dub-inspired glass card */
+  .glass-card-dub {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: 
+      0 1px 2px rgba(0, 0, 0, 0.02),
+      0 8px 24px rgba(0, 0, 0, 0.04),
+      inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  }
+
+  .dark .glass-card-dub {
+    background: rgba(15, 23, 42, 0.65); /* zinc-900 with opacity */
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 
+      0 1px 2px rgba(0, 0, 0, 0.15),
+      0 8px 24px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* Dotted Grid Backdrop pattern */
+  .bg-dot-pattern {
+    background-image: radial-gradient(rgba(0, 0, 0, 0.06) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .dark .bg-dot-pattern {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  }
+
+  /* Premium transition helper (explicitly listing properties instead of transition: all) */
+  .transition-dub {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    transition-duration: 200ms;
+  }
+}
+
+/* Page Transition — subtle fade-in on navigation.
+ * NOTE: intentionally opacity-only. A lingering `transform` (from
+ * animation-fill-mode) on #main-content children establishes a containing
+ * block for position:fixed descendants, which broke modal/dialog centering
+ * on long pages (dialogs anchored to the tall page element instead of the
+ * viewport). Fading with no transform avoids that entirely. */
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+#main-content > * {
+  animation: pageEnter 0.3s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #main-content > * {
+    animation: none;
+  }
+}
+
+/* Custom Minimal Scrollbar */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #e4e4e7 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #e4e4e7; /* zinc-200 */
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa; /* zinc-400 */
+}
+
+/* Animations — respect reduced-motion preference */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes floatSlow {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 0.2; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(1.08); }
+  }
+
+  .animate-fade {
+    animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-slideUp {
+    animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-float {
+    animation: floatSlow 4s ease-in-out infinite;
+  }
+
+  .animate-glow-pulse {
+    animation: pulseGlow 8s ease-in-out infinite;
+  }
+
+  @keyframes radarSweep {
+    0% {
+      transform: translateY(-10%);
+      opacity: 0;
+    }
+    15% {
+      opacity: 0.8;
+    }
+    85% {
+      opacity: 0.8;
+    }
+    100% {
+      transform: translateY(180%);
+      opacity: 0;
+    }
+  }
+}
+
+@utility animate-radar-sweep {
+  animation: radarSweep 6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Reduced-motion: instant visibility, no animation */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade,
+  .animate-slideUp {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .animate-float,
+  .animate-glow-pulse,
+  .animate-radar-sweep {
+    animation: none;
+  }
+}
+
+/* ── Touch & Mobile Optimizations ────────────────────────── */
+/* Improve touch target sizes on mobile. Switches ([role="switch"]) keep
+   their deterministic inline geometry — the 40px floor stretches the
+   compact Toggle pill into a deformed capsule. */
+@media (pointer: coarse) {
+  button:not([role="switch"]), a:not([role="switch"]), [role="button"]:not([role="switch"]), select, input[type="submit"], input[type="button"] {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  /* Prevent zoom on double-tap for canvas elements */
+  canvas, iframe, [data-canvas] {
+    touch-action: manipulation;
+  }
+
+  /* Smooth momentum scrolling for chat and content panels */
+  .overflow-y-auto, .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Kill the SSR sidebar flash on phones: the shell's first paint is
+   server-rendered with a 280px sidebar column (viewport + localStorage are
+   client-only), which would flash open before the JS phone tier kicks in.
+   This !important grid override pins phones to the chat-only layout from
+   the very first frame; the frame's post-hydration measurement agrees. */
+@media (max-width: 767px) {
+  .app-shell {
+    grid-template-columns: 0px minmax(0, 1fr) 0px !important;
+  }
+}
+
+/* Prevent FAB overlap — ensure bottom spacing on mobile */
+@media (max-width: 1024px) {
+  /* Studio: bottom padding for floating action buttons */
+  .lg\:relative + * [class*="bottom-"],
+  [class*="fixed bottom-"] {
+    margin-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+  }
+
+  /* Chat input area: extra safe-area clearance */
+  form[class*="sticky"], form[class*="fixed"],
+  div[class*="sticky bottom"], div[class*="fixed bottom"] {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Smoother canvas pan/zoom gestures */
+[data-canvas-viewport] {
+  touch-action: pan-x pan-y pinch-zoom;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  App-shell design tokens (the shell's color system)                         */
+/*  Scoped under .lf-tokens — the shell frame and settings modal carry the     */
+/*  class; descendants use the token utilities below (bg-bone, text-ink, …).   */
+/*  Opacity variants (text-ink/60 …) are defined here too — Tailwind can't     */
+/*  generate them for non-theme colors, so without these they silently no-op.  */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.lf-tokens {
+  /* --app-accent is also defined on .app-shell (the frame) — the settings
+     modal lives OUTSIDE the frame (root layout, lf-tokens only), so the
+     accent must exist in both scopes or every var(--app-accent) there
+     silently no-ops (transparent toggles, dead hover states). */
+  --app-accent: #ff3b00;
+  --lf-bone: 60 15% 95%;
+  --lf-bone-deep: 60 12% 90%;
+  --lf-ink: 60 5% 5%;
+  --lf-ink-secondary: 60 2% 35%;
+  --lf-vermillion: 14 100% 50%;
+  --lf-bone-hex: #F4F4F0;
+  --lf-ink-hex: #0F0F0D;
+  --lf-ink-secondary-hex: #5A5A56;
+  --lf-vermillion-hex: #FF3B00;
+}
+
+.dark .lf-tokens {
+  --lf-bone: 60 5% 5%;
+  --lf-bone-deep: 60 6% 10%;
+  --lf-ink: 60 15% 95%;
+  --lf-ink-secondary: 60 10% 75%;
+  --lf-vermillion: 14 100% 50%;
+  --lf-bone-hex: #0F0F0D;
+  --lf-ink-hex: #F4F4F0;
+  --lf-ink-secondary-hex: #C4C4BA;
+  --lf-vermillion-hex: #FF3B00;
+}
+
+/* Public pages are ALWAYS light. The app's dark theme must never leak into
+ * someone's public profile, workspace, or storefront — those pages wear
+ * the creator's chosen page color as their only skin. Equal specificity to
+ * `.dark .lf-tokens`; declared after it so the light values win. */
+.lf-tokens.public-light {
+  color-scheme: light;
+  --lf-bone: 60 15% 95%;
+  --lf-bone-deep: 60 12% 90%;
+  --lf-ink: 60 5% 5%;
+  --lf-ink-secondary: 60 2% 35%;
+  --lf-bone-hex: #F4F4F0;
+  --lf-ink-hex: #0F0F0D;
+  --lf-ink-secondary-hex: #5A5A56;
+  /* Base ink/bone so unstyled descendants never inherit html.dark body's
+     light text / dark background into a public (always-light) page. */
+  color: hsl(var(--lf-ink));
+  background-color: hsl(var(--lf-bone));
+}
+
+/* Headings inside the token scope must NOT be force-colored by the global
+ * `h1..h6 { color: #09090b }` base rule — let them inherit their color
+ * classes (text-bone / text-ink). */
+.lf-tokens h1,
+.lf-tokens h2,
+.lf-tokens h3,
+.lf-tokens h4,
+.lf-tokens h5,
+.lf-tokens h6,
+.dark .lf-tokens h1,
+.dark .lf-tokens h2,
+.dark .lf-tokens h3,
+.dark .lf-tokens h4,
+.dark .lf-tokens h5,
+.dark .lf-tokens h6 {
+  color: inherit;
+}
+
+/* Visual primitives */
+.lf-tokens .bg-bone { background-color: hsl(var(--lf-bone)); }
+.lf-tokens .bg-bone-deep { background-color: hsl(var(--lf-bone-deep)); }
+.lf-tokens .bg-ink { background-color: hsl(var(--lf-ink)); }
+.lf-tokens .text-bone { color: hsl(var(--lf-bone)); }
+.lf-tokens .text-ink { color: hsl(var(--lf-ink)); }
+.lf-tokens .text-ink-secondary { color: hsl(var(--lf-ink-secondary)); }
+/* Semi-transparent bone (top bar on a colored page bg) + hairline borders */
+.lf-tokens .bg-bone\/85 { background-color: hsl(var(--lf-bone) / 0.85); }
+.lf-tokens .border-ink\/10 { border-color: hsl(var(--lf-ink) / 0.1); }
+.lf-tokens .border-ink\/5 { border-color: hsl(var(--lf-ink) / 0.05); }
+/* Avatar ring + banner gradient stop — follow the page bone */
+.lf-tokens .ring-bone { --tw-ring-color: hsl(var(--lf-bone)); }
+.lf-tokens .to-bone { --tw-gradient-to: hsl(var(--lf-bone)); }
+/* Colored public pages: the banner fades into the page color (--lf-page),
+   and the avatar ring blends with it — no hard line under the banner. */
+.lf-tokens .ring-page { --tw-ring-color: var(--lf-page); }
+.lf-tokens .to-page { --tw-gradient-to: var(--lf-page); }
+
+/* Opacity variants — Tailwind can't generate these (not theme colors) */
+.lf-tokens .text-ink\/15 { color: hsl(var(--lf-ink) / 0.15); }
+.lf-tokens .text-ink\/20 { color: hsl(var(--lf-ink) / 0.2); }
+.lf-tokens .text-ink\/25 { color: hsl(var(--lf-ink) / 0.25); }
+.lf-tokens .text-ink\/30 { color: hsl(var(--lf-ink) / 0.3); }
+.lf-tokens .text-ink\/35 { color: hsl(var(--lf-ink) / 0.35); }
+.lf-tokens .text-ink\/40 { color: hsl(var(--lf-ink) / 0.4); }
+.lf-tokens .text-ink\/45 { color: hsl(var(--lf-ink) / 0.45); }
+.lf-tokens .text-ink\/50 { color: hsl(var(--lf-ink) / 0.5); }
+.lf-tokens .text-ink\/60 { color: hsl(var(--lf-ink) / 0.6); }
+.lf-tokens .text-ink\/65 { color: hsl(var(--lf-ink) / 0.65); }
+.lf-tokens .text-ink\/70 { color: hsl(var(--lf-ink) / 0.7); }
+.lf-tokens .text-ink\/75 { color: hsl(var(--lf-ink) / 0.75); }
+.lf-tokens .text-ink\/80 { color: hsl(var(--lf-ink) / 0.8); }
+.lf-tokens .bg-ink\/5 { background-color: hsl(var(--lf-ink) / 0.05); }
+.lf-tokens .bg-ink\/10 { background-color: hsl(var(--lf-ink) / 0.1); }
+.lf-tokens .bg-ink\/30 { background-color: hsl(var(--lf-ink) / 0.3); }
+
+/* Selection */
+.lf-tokens ::selection {
+  background: hsl(var(--lf-vermillion));
+  color: hsl(var(--lf-bone));
+}
+
+/* Marquee animation */
+.lf-tokens .marquee-track {
+  display: flex;
+  animation: lf-marquee 60s linear infinite;
+  will-change: transform;
+}
+
+@keyframes lf-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Blink cursor */
+.lf-tokens .blink {
+  animation: lf-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes lf-blink {
+  to { visibility: hidden; }
+}
+
+/* Reveal animation */
+.lf-tokens .reveal {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: lf-reveal 0.7s ease forwards;
+}
+
+@keyframes lf-reveal {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lf-tokens .marquee-track,
+  .lf-tokens .blink,
+  .lf-tokens .reveal {
+    animation: none;
+  }
+  .lf-tokens .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Skip-to-content — visible on focus, hidden otherwise */

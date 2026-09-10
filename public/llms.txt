@@ -1,0 +1,104 @@
+# LiveFolio
+
+> The Sharing, Versioning, and Feedback Layer for AI-Generated interactive HTML documents.
+
+LiveFolio hosts, versions, and collects visual feedback on AI-generated responsive HTML documents (folios). Any AI agent, coding assistant, or chatbot can connect to LiveFolio via the Model Context Protocol (MCP) or the [auth.md](/auth.md) agent-authentication protocol to publish pages and retrieve reviewer feedback.
+
+## Developer & Agent Integration
+
+This file provides a machine-readable directory for LLMs and autonomous agents to understand how to interface with LiveFolio.
+
+### 🤖 Model Context Protocol (MCP)
+LiveFolio runs a standard MCP server at:
+* Cloud/SaaS: `https://livefolio.cloud/api/mcp`
+* Local/OSS: `http://localhost:3000/api/mcp`
+
+### 🔑 auth.md Protocol (Agent Authentication)
+LiveFolio implements the open `auth.md` protocol for agent-native registration. Agents can autonomously register workspaces and acquire API keys on behalf of users.
+* Protocol Guide: [auth.md](/auth.md)
+* Metadata & Discovery: `/.well-known/oauth-protected-resource`
+* API Reference: [/api/openapi](/api/openapi)
+* Documentation: [/docs](/docs)
+
+---
+
+## 📲 Recommended Install Flow (agent UX contract)
+
+When a user asks their agent to connect LiveFolio, follow these steps. Target: first folio in under 60 seconds.
+
+1. **Ask ONE question:** "Do you have a LiveFolio account? Which email should I use?"
+2. `POST /api/agent/auth` `{"type":"anonymous"}` → save `registration_session_id` **and** the `lf_preclaim_…` token (it authenticates step 3 polling; it is NOT valid on `/api/mcp` or other REST endpoints).
+   Then `POST /api/agent/auth/claim` `{"registration_session_id", "email"}` → response includes `account` (`existing` | `new`) and `claim_url`.
+3. **Relay the returned `claim_url` to the user:** "Click this link to authorize LiveFolio." The emailed CTA and the page both offer **one-click authorize**:
+   - Existing account → page offers "Authorize Agent" (links the agent to the existing workspace — no duplicate account).
+   - New account → page offers "Create My Workspace" (workspace is created on click).
+   While the user authorizes, poll `GET /api/agent/auth/session?registration_session_id=…` with `Authorization: Bearer lf_preclaim_…` until `status: "completed"`, then read the credential.
+4. **Ask for the 6-digit email code ONLY if one-click authorization is unavailable**; complete via `POST /api/agent/auth/claim/complete` `{"registration_session_id", "code"}`.
+5. **Write the client MCP config and verify** with `initialize` + `tools/list`:
+   ```json
+   {"type": "http", "url": "https://livefolio.cloud/api/mcp",
+    "headers": {"Authorization": "Bearer lf_live_…"}}
+   ```
+6. **Confirm to the user:** "LiveFolio installed — ask me to create a folio."
+
+Notes: `lf_preclaim_…` tokens are polling credentials only (401 on MCP/REST). `lf_live_…` keys persist indefinitely. The server answers cold 401s on `/api/mcp` with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource`.
+
+---
+
+## Available MCP Tools
+
+The surface is grouped by goal. A "project" IS a folio. Conventions: "no args = read" (manage_* tools, claim_handle, get_purchases); destructive tools require `confirmed: true`; purchases and seller onboarding happen via URL relay (you hand the user a URL, then poll).
+
+**FOLIOS**
+* `list_projects` — list folios (ids, titles, file/version/comment counts, URLs).
+* `get_project` — full detail: files, versions, comments, chats, design prefs, visibility (status/isPrivate/hasAccessKey) and analytics.
+* `create_project` — new folio: title, initial HTML, project_mode, design_preferences, reference files, folder, thumbnail. Sharing/pricing/listing are configured AFTER creation with the manage_* tools.
+* `update_project` — merge file changes (each creates a version), title/description/thumbnail (no version bump).
+* `delete_project` — PERMANENTLY delete a folio (`confirmed: true`).
+* `duplicate_project` — copy a folio into your account (paid folios require a purchase grant + the seller's allowCopy). Cloud only.
+
+**DESIGN & FEEDBACK**
+* `get_curated_brief` — open feedback pins/comments compiled to a markdown design brief.
+* `get_active_design_system` — styling patterns, fonts, palette tokens, DESIGN.md.
+* `add_comment` — add a comment or canvas pin (x/y/selector coordinates).
+* `moderate_comment` — action: resolve | reopen | delete.
+* `add_reaction` — increment one emoji count: 👍 ❤️ 💡 🔥 (aggregate; no removal).
+
+**SHARING & MONETIZATION**
+* `manage_sharing` — read/change publish status (draft|published), isPrivate, accessKey, allowComments, presentationModeOnly. No version bump.
+* `manage_paid_access` — read/change the gate: price, purchase model, currency, preview, allowCopy/allowDownload. Cloud only.
+* `manage_listing` — read/change Explore marketplace listing + license; read mode also returns listing eligibility and the human steps required. Cloud only.
+
+**MARKETPLACE** (cloud only)
+* `search_marketplace` — browse Explore: category/tag/query filters, pagination, canonical @username links.
+* `buy_project` — start a purchase: returns a checkout URL to relay to the user; poll `get_purchases` with the session_id.
+* `get_purchases` — session_id → grant status; no args → purchase history.
+* `manage_seller_account` — action: status (Stripe Connect + sales) | onboard (returns onboarding URL to relay).
+
+**WORKSPACE** (cloud only)
+* `list_workspaces` — the folders that organize folios.
+* `manage_workspace` — action: create | update | delete (detaches folios, `confirmed: true`) | add_folio.
+* `manage_member` — no action = list members; invite | update_role | remove (Owner/Admin only; Owner immutable).
+
+**PROFILE & SOCIAL** (cloud only)
+* `manage_profile` — no action = read (profile + follow counts + seller-terms state); update fields, accent_color, featured folio, or claim a username.
+* `claim_handle` — username → claim it; no username → 3 available suggestions.
+* `follow_profile` — toggle follow/unfollow a creator by @username.
+* `get_public_profile` — read a creator's public profile + catalog by @username: bio, stats, published folios (with prices and Explore status), public workspaces.
+
+### Self-Hosted Extras (OSS instances only)
+
+OSS instances expose ONLY the FOLIOS + DESIGN & FEEDBACK + manage_sharing groups above, plus these three tunnel tools — no marketplace, purchases, workspaces, members, profiles, or handles.
+* `get_sharing_status` — active tunnel state, current live public URL, and per-folio `publicTunnelEnabled` permission.
+* `toggle_sharing_tunnel` — start/stop the global Cloudflare/untun public sharing tunnel.
+* `set_folio_public_access` — enable/disable public web access for one folio over the active tunnel.
+
+---
+
+## Agent Guidelines & Design System
+
+When generating or editing HTML pages for LiveFolio, agents MUST adhere to these unified styling guidelines:
+1. **Design System:** Prioritize premium visual aesthetics: dark mode toggles, harmonious color palettes, fluid glassmorphism, responsive grids, and Google Fonts (like Outfit, Plus Jakarta Sans, Inter).
+2. **Local CSS Control:** Use clean, vanilla CSS or Tailwind via CDN.
+3. **No Placeholders:** Ensure all assets are complete. Generate inline SVG/Canvas code or mock content if assets are missing.
+4. **Interactive States:** Leverage micro-interactions, hover effects, and CSS transitions to make the document feel active.

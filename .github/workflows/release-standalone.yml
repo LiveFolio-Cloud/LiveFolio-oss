@@ -1,0 +1,111 @@
+# =============================================================================
+# Release standalone tarball — P3-T02 (App Shell v2, cli-tooling persona)
+#
+# Manual-release channel for the one-command OSS install (`npx @livefolio/cli`).
+# The CLI is a tiny npm launcher; the actual app ships as this release tarball.
+# Human-side steps are documented in the NPM publishing runbook, Part 7.
+#
+#   Trigger          tag push `v*` on this repo (e.g. `git tag v0.1.0 && git push --tags`)
+#   Version lockstep CLI 0.1.0  ↔  tag v0.1.0  ↔  asset livefolio-standalone-0.1.0.tar.gz
+#   Asset URL        https://github.com/LiveFolio-Cloud/LiveFolio-oss/releases/download/
+#                    v<ver>/livefolio-standalone-<ver>.tar.gz
+#
+# Prerequisites (synced from the main repo via `node bin/sync-oss.js`, NEVER
+# overwritten by the sync itself — `.github/` is outside the sync whitelist):
+#   - next.config.mjs has the env-gated standalone output:
+#       output: process.env.LIVEFOLIO_STANDALONE === '1' ? 'standalone' : undefined
+#   - bin/package-standalone.js exists (this workflow is the automated version
+#     of the manual `gh release create` command in runbook Part 7)
+#
+# Design notes:
+#   - `bin/package-standalone.js` OWNS the build: it runs `next build` itself
+#     with LIVEFOLIO_STANDALONE=1 + NEXT_PUBLIC_APP_ENV=oss and blanks every
+#     other NEXT_PUBLIC_* so cloud keys are never inlined into the tarball.
+#     It also clears stale `.next/` (P3-T04 guard), prunes traced secrets
+#     (.env, database*.json, settings.json, localhost.har) and hard-fails the
+#     run if any junk is found in the tarball — so this workflow does not
+#     duplicate those checks.
+#   - npm install (not `npm ci`): the sync never copies the Cloud lockfile
+#     down; the OSS repo tracks its own, which the sync does not rewrite, so
+#     it can lag package.json until regenerated here. Kept as `npm install`
+#     so a fresh tag never fails on a stale lock.
+#   - Version comes from the GIT TAG, not package.json (which stays at 1.0.0):
+#     `LIVEFOLIO_VERSION` strips the leading `v` and names the tarball.
+#   - The CLI caches per version (~/.livefolio/versions/<v>/), so a tag bump
+#     changes the cache key — no `--update` needed for upgrades; `--update`
+#     only forces a re-download of the pinned version.
+# =============================================================================
+
+name: Release standalone tarball
+
+on:
+  push:
+    tags:
+      - 'v*' # version-lockstep release tags, e.g. v0.1.0
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false # never kill a build that is mid-release
+
+permissions:
+  contents: write # required to create the release + upload the asset
+
+env:
+  # Raw tag ref (e.g. v0.1.0). Actions expressions have no string operations,
+  # so the `v`-prefix strip happens in a shell step below (do NOT try
+  # `${{ github.ref_name#v }}` — it is invalid and silently kills the run).
+  LIVEFOLIO_RAW_VERSION: ${{ github.ref_name }}
+
+jobs:
+  build-and-release:
+    name: Build standalone tarball and attach to release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # next build + package can take a while on a cold runner
+    outputs:
+      version: ${{ steps.strip.outputs.version }}
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # v0.1.0 -> 0.1.0 (names the packager tarball).
+      - name: Derive packager version
+        id: strip
+        run: echo "version=${LIVEFOLIO_RAW_VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      # No lockfile in the OSS repo (sync strips package-lock.json by design),
+      # so `npm ci` is not an option here.
+      - name: Install dependencies
+        run: npm install
+
+      # Builds (LIVEFOLIO_STANDALONE=1 -> standalone output; NEXT_PUBLIC_APP_ENV=oss
+      # -> the app boots in OSS mode in production; other NEXT_PUBLIC_* blanked)
+      # and packages dist/livefolio-standalone-<LIVEFOLIO_VERSION>.tar.gz.
+      - name: Build and package standalone
+        env:
+          LIVEFOLIO_STANDALONE: '1'
+          NEXT_PUBLIC_APP_ENV: oss
+          LIVEFOLIO_VERSION: ${{ steps.strip.outputs.version }}
+        run: node bin/package-standalone.js
+
+      # softprops/action-gh-release instead of the `gh` CLI:
+      #   - attaches the asset with a glob and creates the release for the
+      #     pushed tag in one step; `generate_release_notes: true` mirrors
+      #     the runbook's `--generate-notes`
+      #   - uses the automatic GITHUB_TOKEN (contents: write) with no manual
+      #     GH_TOKEN wiring, and fails loudly on a missing asset
+      #   (the `gh` CLI is preinstalled on hosted runners and would work too,
+      #   but needs explicit GH_TOKEN plumbing and more shell glue)
+      - name: Create GitHub release with tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: dist/livefolio-standalone-${{ steps.strip.outputs.version }}.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true

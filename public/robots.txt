@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+
+# AI agent discovery endpoints
+Allow: /auth.md
+Allow: /llms.txt
+Allow: /api/auth-md
+Allow: /.well-known/oauth-protected-resource
+
+# MCP endpoint (AI agents authenticate here)
+Allow: /api/mcp
+
+# Agent authentication endpoints
+Allow: /api/agent/auth
+Allow: /api/agent/auth/claim
+Allow: /api/agent/auth/claim/complete
+
+Sitemap: https://livefolio.cloud/sitemap.xml
