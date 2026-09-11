@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && next dev -p 3001",
-    "build": "next build",
-    "analyze": "cross-env ANALYZE=true next build",
-    "start": "node server.ts",
+    "build": "cross-env NEXT_PUBLIC_APP_ENV=oss next build",
+    "analyze": "cross-env ANALYZE=true NEXT_PUBLIC_APP_ENV=oss next build",
+    "start": "cross-env NODE_ENV=production node server.ts",
     "lint": "eslint app components lib hooks ee bin --ext .ts,.tsx || true",
     "test": "vitest run",
     "test:watch": "vitest"
