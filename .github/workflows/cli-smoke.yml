@@ -1,0 +1,103 @@
+# =============================================================================
+# CLI install smoke test
+#
+# Exercises the REAL user path: npm package -> GitHub release tarball -> boot.
+# The CLI's unit tests only cover pure logic (flag parsing, version
+# normalization), which is exactly how 0.1.0 shipped with a broken install: it
+# called the async download without awaiting, so `tar` ran against a file that
+# did not exist yet. Nothing in the old suite could have caught that.
+#
+# This job downloads the published package, boots it cold, and asserts the app
+# actually serves. Runs weekly, on demand, and whenever a release is published.
+# =============================================================================
+
+name: CLI install smoke test
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:17 UTC — off the hour so it does not pile onto other cron jobs.
+    - cron: '17 6 * * 1'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  cold-install:
+    name: Cold-install the published CLI and boot it
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # A `tar` that fails on a missing/truncated archive is the signal we want,
+      # so do not let the runner paper over it.
+      - name: Boot the published CLI (cold cache)
+        env:
+          LIVEFOLIO_DATA_DIR: ${{ runner.temp }}/livefolio-data
+        run: |
+          set -euo pipefail
+          # --no-open: no browser on a runner. Fixed port so the probe is simple.
+          npx --yes @livefolio-cloud/cli@latest \
+            --no-open --port 4321 --data-dir "$LIVEFOLIO_DATA_DIR" \
+            > "$RUNNER_TEMP/cli.log" 2>&1 &
+          echo "cli_pid=$!" >> "$GITHUB_ENV"
+
+      # Booting downloads ~24 MB and starts Next.js; poll rather than sleep a
+      # fixed amount so a slow runner is not a flake.
+      - name: Wait for the app to serve
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:4321/ || true)
+            if [ "$code" = "200" ]; then
+              echo "✓ landing served 200 after ~$((i * 5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "✗ app never came up. CLI log:"
+          cat "$RUNNER_TEMP/cli.log"
+          exit 1
+
+      - name: Assert the MCP endpoint responds
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            -X POST http://localhost:4321/api/mcp \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"list_projects"}')
+          echo "MCP responded $code"
+          # 200 = served. Anything else means the OSS agent surface is broken.
+          [ "$code" = "200" ] || { cat "$RUNNER_TEMP/cli.log"; exit 1; }
+
+      - name: Assert the flat-file DB initialised
+        run: |
+          set -euo pipefail
+          test -f "$LIVEFOLIO_DATA_DIR/database.json" \
+            || { echo "✗ database.json was not created"; ls -la "$LIVEFOLIO_DATA_DIR" || true; exit 1; }
+          echo "✓ database.json created"
+
+      # A partial download or a broken extract must fail loudly, never boot.
+      - name: Assert no download/extract errors
+        run: |
+          set -euo pipefail
+          if grep -qiE 'NaN MB|Failed to open|tar: Error|ENOENT.*tar\.gz' "$RUNNER_TEMP/cli.log"; then
+            echo "✗ download/extract failure detected:"
+            grep -iE 'NaN MB|Failed to open|tar: Error|ENOENT.*tar\.gz' "$RUNNER_TEMP/cli.log"
+            exit 1
+          fi
+          echo "✓ no download or extraction errors"
+
+      - name: Show CLI log
+        if: always()
+        run: cat "$RUNNER_TEMP/cli.log" || true
+
+      - name: Stop the CLI
+        if: always()
+        run: kill "${cli_pid:-0}" 2>/dev/null || true
