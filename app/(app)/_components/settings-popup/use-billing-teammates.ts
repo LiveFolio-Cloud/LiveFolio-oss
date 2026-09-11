@@ -15,6 +15,8 @@ export interface BillingUsage {
   name: string;
   storage_used_bytes?: number;
   storage_limit_bytes?: number;
+  /** Stripe renewal state — 'past_due' when the latest invoice failed. */
+  subscription_status?: string | null;
 }
 
 export interface Teammate {

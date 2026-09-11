@@ -20,6 +20,8 @@ export interface OrganizationQuota {
   plan: 'Free' | 'Pro' | 'Team' | 'Enterprise';
   monthly_message_count: number;
   monthly_message_limit: number;
+  /** Stripe renewal state — never set in OSS (no billing). */
+  subscription_status?: string | null;
 }
 
 export interface UserQuota {

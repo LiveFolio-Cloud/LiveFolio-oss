@@ -7,6 +7,7 @@
  */
 import { AlertCircle, CreditCard, Users } from 'lucide-react';
 import { SectionShell } from './section-shell';
+import { InvoicesList } from './invoices-list';
 import { useBillingTeammates } from './use-billing-teammates';
 
 export function BillingSection() {
@@ -17,9 +18,32 @@ export function BillingSection() {
 
   if (!isAdmin) return null;
 
+  // Dunning: the latest renewal failed and Stripe is retrying. Warn clearly,
+  // but keep the plan and access intact — an expired card shouldn't cost a
+  // paying customer their workspace mid-retry.
+  const pastDue = billingUsage?.subscription_status === 'past_due';
+
   return (
     <>
 <SectionShell icon={CreditCard} title="Billing & Quota">
+            {pastDue && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2">
+                <AlertCircle size={13} className="mt-0.5 shrink-0 text-amber-600" />
+                <div className="min-w-0 text-[12px] leading-relaxed text-ink/70">
+                  <span className="font-semibold text-ink">Payment failed.</span>{' '}
+                  Stripe is retrying your last invoice — your plan stays active
+                  in the meantime. Update your card with{' '}
+                  <button
+                    type="button"
+                    onClick={handleBillingAction}
+                    className="cursor-pointer font-semibold text-[var(--app-accent)] underline-offset-2 hover:underline"
+                  >
+                    Manage Subscription
+                  </button>{' '}
+                  to avoid losing access.
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-ink">Workspace plan</span>
               <span className="rounded-full bg-[var(--app-accent)]/10 px-2.5 py-0.5 text-xs font-semibold text-[var(--app-accent)]">
@@ -162,6 +186,8 @@ export function BillingSection() {
               </p>
             )}
           </SectionShell>
+
+          <InvoicesList />
     </>
   );
 }

@@ -285,6 +285,11 @@ export async function createGateCheckoutSession(params: {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer: customerId,
+      // Dynamic payment methods (no `payment_method_types`) — Stripe decides
+      // what to offer from the Dashboard configuration.
+      automatic_tax: { enabled: true },
+      billing_address_collection: 'required',
+      customer_update: { address: 'auto' },
       line_items: [
         {
           quantity: 1,
