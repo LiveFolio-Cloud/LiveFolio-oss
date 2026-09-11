@@ -55,7 +55,7 @@ const SECTION_DESCRIPTIONS: Record<string, string> = {
   "api-reference":
     "Complete REST API reference — endpoints, authentication, rate limits, request/response schemas for every LiveFolio API route.",
   "self-hosting":
-    "Run LiveFolio on your own infrastructure. Covers environment variables, flat-file DB configuration, and production deployment.",
+    "Run the open-source edition on your own machine — install, configure, back up, and share. No account, no database server, no telemetry.",
 };
 
 // ── Metadata ─────────────────────────────────────────────────────────────────

@@ -35,7 +35,8 @@ export const SECTIONS: DocSection[] = [
       { slug: "analytics", title: "Analytics", description: "View tracking and engagement metrics for shared folios", order: 6 },
       { slug: "integrations", title: "Integrations", description: "Connect AI agents via MCP, Slack, and Discord", order: 7 },
       { slug: "design-systems", title: "Design Systems", description: "Apply and customize design systems for visual consistency", order: 8 },
-      { slug: "faq", title: "FAQ", description: "Frequently asked questions about LiveFolio", order: 9 },
+      { slug: "billing-and-invoices", title: "Billing & Invoices", description: "Plans, upgrading, invoices, and managing your subscription (Cloud only)", order: 9 },
+      { slug: "faq", title: "FAQ", description: "Frequently asked questions about LiveFolio", order: 10 },
     ],
   },
   {
