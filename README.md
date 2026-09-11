@@ -17,32 +17,68 @@ Everything runs on your machine: a single `database.json`, your own AI keys
 
 ---
 
-## Quickstart
+## Install
 
 Requires **Node.js 20+**. No database, no Docker, no `.env` — nothing.
 
-### One command (recommended)
+### 1. One command (recommended)
 
 ```bash
 npx @livefolio-cloud/cli
 ```
 
-The launcher downloads the current standalone build, boots it on a free port,
-and opens your browser. Data lives in `~/.livefolio/data`; the MCP endpoint is
-printed in the terminal. `--port`, `--data-dir`, and `--update` are available.
-
-> The `@livefolio` scope on npm belongs to an unrelated project — our package
-> is `@livefolio-cloud/cli`.
-
-### From source
+Downloads the current standalone build, boots it on a free port, and opens
+your browser. Data lives in `~/.livefolio/data`; upgrading is just
+`npx @livefolio-cloud/cli --update`.
 
 ```bash
+--port <n>         # prefer a specific port
+--data-dir <dir>   # put data somewhere else
+--update           # re-download the latest build
+--no-open          # don't open a browser
+```
+
+> The `@livefolio` scope on npm belongs to an unrelated project — the package
+> is `@livefolio-cloud/cli`.
+
+### 2. From source
+
+```bash
+git clone https://github.com/LiveFolio-Cloud/LiveFolio-oss.git
+cd LiveFolio-oss
 npm install
 npm run dev
 ```
 
 Open **[http://localhost:3001](http://localhost:3001)** (port 3001 is pinned
-so LiveFolio can sit next to your other dev servers).
+so LiveFolio can sit next to your other dev servers). For a production build:
+`npm run build && npm start`.
+
+### 3. Python SDK
+
+Talk to any LiveFolio instance — local or hosted — from Python:
+
+```bash
+pip install livefolio
+```
+
+```python
+from livefolio import LiveFolio
+
+# A local instance — OSS runs without accounts, so any key string works
+client = LiveFolio("local", base_url="http://localhost:3001")
+
+client.create_folio(
+    title="Quarterly Review",
+    initial_html="<h1>Q3 Highlights</h1><p>Revenue up 24%</p>",
+    project_mode="deck",
+)
+
+for f in client.list_folios():
+    print(f.title)
+```
+
+Verified against a local OSS instance (`list_folios`, `create_folio`).
 
 ### First run — connect a model
 
@@ -91,9 +127,10 @@ optional custom-domain override (ngrok / your own Cloudflare hostname):
 
 - **Version every change** — every manual save or AI edit creates a named
   checkpoint; compare and restore from the version rail.
-- **Chat-edit your folios (BYOK)** — your keys, your machine: edit, restyle,
-  add or delete pages, apply a design system, export. Providers with native
-  function-calling do the full tool loop.
+- **Build with chat (BYOK)** — describe a folio and it's generated: deck,
+  document, spreadsheet, dashboard, or infography. Your keys, your machine.
+- **Chat-edit any folio** — edit, restyle, add or delete pages, apply a design
+  system, export. Providers with native function-calling do the full tool loop.
 - **Publish and share** — on-demand tunnel, public links, comments and
   reactions from guests, all stored locally.
 - **Collect precise feedback** — reviewers pin comments directly on the
@@ -103,6 +140,28 @@ optional custom-domain override (ngrok / your own Cloudflare hostname):
   applicable from the chat.
 - **Agent-native** — your Claude Code / Cursor / any MCP client reads and
   writes your library over the local MCP server.
+
+### What runs locally vs. what needs Cloud
+
+Everything below is honest about the boundary — a local instance exposes no
+half-working versions of Cloud features.
+
+| Capability | OSS (local) | Cloud |
+|---|---|---|
+| Create / edit / version folios | ✅ | ✅ |
+| AI creation & editing | ✅ with **your own key** | ✅ managed, no key setup |
+| Comments, pins, reactions | ✅ | ✅ |
+| Public sharing (tunnel) | ✅ | ✅ hosted domains |
+| MCP server for agents | ✅ full local surface | ✅ hosted |
+| Data storage | `database.json` on your disk | managed Postgres |
+| Accounts, teams, roles | — | ✅ |
+| Public profile / @handles / follows | — | ✅ |
+| Explore marketplace | — | ✅ |
+| Paid access, checkout, payouts | — | ✅ |
+| Custom domains, SSO, audit | — | ✅ |
+
+The practical difference for AI: locally you bring a provider key; on Cloud
+models are managed server-side and there's nothing to configure.
 
 ---
 
@@ -162,6 +221,7 @@ tools exist in LiveFolio Cloud — they're hidden in OSS.)
 app/                 Next.js routes — /app workspace, /share viewer, /api/*
 components/          Studio, chat, share, and app-shell UI
 lib/                 flat-file DB (lib/db.ts), env, AI providers, app shell
+content/docs/        Documentation served at /docs
 design-systems/      140+ portable design specs (DESIGN.md each)
 assets/screenshots/  README images
 server.ts            Production entry (node server.ts after npm run build)
