@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isOSS } from '@/lib/env';
 
 /**
  * Live tunnel state for OSS mode — GET /api/tunnel on mount, polled every
- * `pollMs`, plus a start/stop toggle. Cloud mode never calls the tunnel API
- * (it 403s outside OSS by design); callers gate on isOSS themselves.
+ * `pollMs`, plus a start/stop toggle.
+ *
+ * The hook gates itself on isOSS rather than relying on callers: /api/tunnel
+ * 403s outside OSS, and a caller CANNOT guard a hook call with a condition
+ * without breaking the Rules of Hooks. Cloud renders this hook inert — no
+ * mount fetch, no interval, no toggle.
  */
 export function useTunnel(pollMs = 10_000) {
   const [tunnelActive, setTunnelActive] = useState(false);
@@ -26,12 +31,14 @@ export function useTunnel(pollMs = 10_000) {
   }, []);
 
   useEffect(() => {
+    if (!isOSS) return;
     void refresh();
     const t = setInterval(() => void refresh(), pollMs);
     return () => clearInterval(t);
   }, [refresh, pollMs]);
 
   const toggle = useCallback(async () => {
+    if (!isOSS) return;
     setToggling(true);
     try {
       const action = tunnelActive ? 'stop' : 'start';
