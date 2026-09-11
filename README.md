@@ -21,6 +21,21 @@ Everything runs on your machine: a single `database.json`, your own AI keys
 
 Requires **Node.js 20+**. No database, no Docker, no `.env` — nothing.
 
+### One command (recommended)
+
+```bash
+npx @livefolio-cloud/cli
+```
+
+The launcher downloads the current standalone build, boots it on a free port,
+and opens your browser. Data lives in `~/.livefolio/data`; the MCP endpoint is
+printed in the terminal. `--port`, `--data-dir`, and `--update` are available.
+
+> The `@livefolio` scope on npm belongs to an unrelated project — our package
+> is `@livefolio-cloud/cli`.
+
+### From source
+
 ```bash
 npm install
 npm run dev
