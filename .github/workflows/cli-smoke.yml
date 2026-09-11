@@ -29,6 +29,10 @@ jobs:
     name: Cold-install the published CLI and boot it
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Job-level so EVERY step sees the path — step-scoped env is invisible to
+    # the later assertion steps, and `set -u` turns that into "unbound variable".
+    env:
+      LIVEFOLIO_DATA_DIR: ${{ runner.temp }}/livefolio-data
     steps:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -38,8 +42,6 @@ jobs:
       # A `tar` that fails on a missing/truncated archive is the signal we want,
       # so do not let the runner paper over it.
       - name: Boot the published CLI (cold cache)
-        env:
-          LIVEFOLIO_DATA_DIR: ${{ runner.temp }}/livefolio-data
         run: |
           set -euo pipefail
           # --no-open: no browser on a runner. Fixed port so the probe is simple.
