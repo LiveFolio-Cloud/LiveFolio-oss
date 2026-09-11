@@ -69,3 +69,9 @@ supabase/.temp/cli-latest
 /videos
 /.impeccable
 /.clawhub
+
+# Python SDK build artifacts (sdks/python)
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/

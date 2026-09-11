@@ -9,14 +9,11 @@
  * dash persona. After a successful creation the hero navigates to
  * `/app/<newId>` (the shell's folio route — Studio tab).
  *
- * Cloud/OSS gating identical to the originals:
- * - model picker renders only when `!isCloud` (DashboardChat parity);
- * - AI creation is disabled in OSS with the same CreateFolioModal gates
- *   (the AI tab there is `disabled={isOSS}`, title "Cloud-only — AI creation
- *   is available on LiveFolio Cloud"): the composer, send button and mode
- *   chips are disabled and the copy explains the gate.
- *
- * NOTE: `/api/files/ai-create` is Cloud-only (403 in OSS) — hence the gate.
+ * Works in both modes. Cloud uses managed models resolved server-side; OSS
+ * uses the visitor's own key (BYOK), sent with the request — the route has
+ * carried an OSS branch since it was written. When no model is configured
+ * locally the empty state asks for a key inline rather than pointing at
+ * Settings.
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
@@ -29,6 +26,7 @@ import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { Toggle } from '../settings-popup/toggle';
 import { Dropdown } from '@/components/ui/dropdown';
 import { useSettingsPopup } from '../settings-popup';
+import { LocalModelKeys } from '@/components/chat/LocalModelKeys';
 import { isCloud, isOSS } from '@/lib/env';
 import {
   type PendingMode,
@@ -61,7 +59,6 @@ const DESIGN_DEFAULTS = {
   libraries: ['Tailwind CSS Core', 'Lucide Icons'] as string[],
 };
 
-const OSS_GATE_TOOLTIP = 'Cloud-only — AI creation is available on LiveFolio Cloud';
 
 export function ChatHero() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -316,7 +313,6 @@ export function ChatHero() {
   // ── Folio creation (v1 dashboard page handleCreateWithPrompt 416–470) ──
 
   const handleCreateWithPrompt = async (prompt: string, mode?: PendingMode | null) => {
-    if (isOSS) return; // hard gate — /api/files/ai-create is Cloud-only
     setIsCreating(true);
     setCreateError(null);
     try {
@@ -444,7 +440,6 @@ export function ChatHero() {
   };
 
   const handleTemplateClick = (mode: 'deck' | 'document' | 'spreadsheet' | 'dashboard' | 'infography') => {
-    if (isOSS) return;
     setPendingMode((prev) => (prev === mode ? null : mode));
     textareaRef.current?.focus();
   };
@@ -452,14 +447,12 @@ export function ChatHero() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (availableModels.length > 0 && !isOSS) handleSend();
+      if (availableModels.length > 0) handleSend();
     }
   };
 
   const hasNoModels = availableModels.length === 0;
-  // AI creation is Cloud-only — same gate as CreateFolioModal's AI tab.
-  const aiCreateDisabled = isOSS;
-  const isInputDisabled = isStreaming || isCreating || aiCreateDisabled || (hasNoModels && !isLoadingModels);
+  const isInputDisabled = isStreaming || isCreating || (hasNoModels && !isLoadingModels);
 
   return (
     <div className="flex flex-col w-full h-full bg-[#F4F4F0] dark:bg-[#0F0F0D]">
@@ -487,30 +480,22 @@ export function ChatHero() {
               Prefer your own agent? Connect it via MCP
               <ArrowUpRight size={11} className="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
             </button>
-            {aiCreateDisabled && (
-              <div className="max-w-sm space-y-1.5 text-left text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-                <p>AI folio creation is a Cloud feature. Locally, you can:</p>
-                <ul className="list-none space-y-1">
-                  <li>
-                    • Create folios with the{' '}
-                    <strong className="font-semibold text-ink/70">+ New folio</strong> button in
-                    the sidebar — blank, upload, or template.
-                  </li>
-                  <li>
-                    • Let an agent publish for you via MCP — connect it in the link above.
-                  </li>
-                </ul>
-                <p>
-                  To chat with AI inside a folio, add your own API keys or point at a local
-                  Ollama in{' '}
-                  <button
-                    type="button"
-                    onClick={() => openSection('general')}
-                    className="cursor-pointer font-semibold text-[var(--app-accent)] underline-offset-2 hover:underline"
-                  >
-                    Settings → General
-                  </button>
-                  .
+            {isOSS && availableModels.length === 0 && !isLoadingModels && (
+              <div className="mx-auto w-full max-w-md space-y-2 text-left">
+                <p className="text-[12px] font-semibold text-ink">
+                  Add your model key to start building
+                </p>
+                <div className="rounded-xl border border-[#0F0F0D]/10 bg-[#0F0F0D]/[0.02] p-3 dark:border-[#F4F4F0]/10 dark:bg-[#F4F4F0]/[0.03]">
+                  <LocalModelKeys
+                    dense
+                    onChanged={(configured) => {
+                      if (configured) void fetchAvailableModels();
+                    }}
+                  />
+                </div>
+                <p className="text-[11px] leading-relaxed text-ink/45">
+                  No keys handy? An agent on this machine can publish for you instead —
+                  connect it via MCP above.
                 </p>
               </div>
             )}
@@ -594,8 +579,7 @@ export function ChatHero() {
           {TEMPLATE_OPTIONS.map(({ mode, label, icon: Icon }) => {
             const isActive = pendingMode === mode;
             return (
-              <button key={mode} type="button" onClick={() => handleTemplateClick(mode)} disabled={isCreating || aiCreateDisabled}
-                title={aiCreateDisabled ? OSS_GATE_TOOLTIP : undefined}
+              <button key={mode} type="button" onClick={() => handleTemplateClick(mode)} disabled={isCreating}
                 className={cn(
                   'flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium cursor-pointer transition-colors',
                   isActive ? 'bg-[var(--app-accent)] text-white shadow-sm'
@@ -688,10 +672,8 @@ export function ChatHero() {
             onChange={(e) => setPromptInput(e.target.value)} onKeyDown={handleKeyDown}
             disabled={isInputDisabled}
             placeholder={
-              aiCreateDisabled
-                ? 'AI creation is available on LiveFolio Cloud'
-                : isLoadingModels ? 'Loading available models…'
-                : hasNoModels ? 'Configure an API key in Settings or start Ollama to chat…'
+              isLoadingModels ? 'Loading available models…'
+                : hasNoModels ? 'Add your model key above to start…'
                 : pendingMode ? `Describe your ${MODE_LABELS[pendingMode].toLowerCase()}…`
                 : 'Describe the folio you want to build…'
             }
@@ -733,7 +715,7 @@ export function ChatHero() {
               )}
               <button type="submit"
                 disabled={isInputDisabled || !promptInput.trim()}
-                title={aiCreateDisabled ? OSS_GATE_TOOLTIP : undefined}
+                title={hasNoModels ? 'Add a model key to start' : undefined}
                 className="w-7 h-7 flex items-center justify-center disabled:opacity-25 transition-colors cursor-pointer shrink-0 rounded-lg bg-[var(--app-accent)] text-white hover:bg-[var(--app-accent)]/90">
                 {isStreaming || isCreating ? <LoadingSpinner size="xs" /> : <Send size={12} />}
               </button>
