@@ -29,10 +29,6 @@ jobs:
     name: Cold-install the published CLI and boot it
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Job-level so EVERY step sees the path — step-scoped env is invisible to
-    # the later assertion steps, and `set -u` turns that into "unbound variable".
-    env:
-      LIVEFOLIO_DATA_DIR: ${{ runner.temp }}/livefolio-data
     steps:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -46,7 +42,7 @@ jobs:
           set -euo pipefail
           # --no-open: no browser on a runner. Fixed port so the probe is simple.
           npx --yes @livefolio-cloud/cli@latest \
-            --no-open --port 4321 --data-dir "$LIVEFOLIO_DATA_DIR" \
+            --no-open --port 4321 --data-dir "$RUNNER_TEMP/livefolio-data" \
             > "$RUNNER_TEMP/cli.log" 2>&1 &
           echo "cli_pid=$!" >> "$GITHUB_ENV"
 
@@ -81,8 +77,8 @@ jobs:
       - name: Assert the flat-file DB initialised
         run: |
           set -euo pipefail
-          test -f "$LIVEFOLIO_DATA_DIR/database.json" \
-            || { echo "✗ database.json was not created"; ls -la "$LIVEFOLIO_DATA_DIR" || true; exit 1; }
+          test -f "$RUNNER_TEMP/livefolio-data/database.json" \
+            || { echo "✗ database.json was not created"; ls -la "$RUNNER_TEMP/livefolio-data" || true; exit 1; }
           echo "✓ database.json created"
 
       # A partial download or a broken extract must fail loudly, never boot.
