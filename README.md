@@ -221,11 +221,14 @@ tools exist in LiveFolio Cloud — they're hidden in OSS.)
 app/                 Next.js routes — /app workspace, /share viewer, /api/*
 components/          Studio, chat, share, and app-shell UI
 lib/                 flat-file DB (lib/db.ts), env, AI providers, app shell
-content/docs/        Documentation served at /docs
 design-systems/      140+ portable design specs (DESIGN.md each)
 assets/screenshots/  README images
 server.ts            Production entry (node server.ts after npm run build)
 ```
+
+Docs live at **[livefolio.cloud/docs](https://livefolio.cloud/docs)** — one
+source for both editions. A local instance's `/docs` redirects there, so
+there's no second copy to drift.
 
 **How this repo is maintained:** LiveFolio development happens in the private
 Cloud repository; this tree receives synchronized, sanitized releases (the

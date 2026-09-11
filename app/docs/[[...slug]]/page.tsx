@@ -4,8 +4,11 @@
  *   /docs                  → landing page with section cards
  *   /docs/user-guide       → renders user-guide/index.md
  *   /docs/user-guide/sharing → renders user-guide/sharing.md
+ *
+ * Renders `content/docs`, which only the Cloud tree carries — a self-hosted
+ * instance redirects to the hosted docs instead (see below).
  */
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 
@@ -15,8 +18,19 @@ import { loadDocFromPath, DocNotFoundError } from "@/lib/docs/loadDoc";
 import { getPrevNext, SECTIONS } from "@/lib/docs/sections";
 import TableOfContents from "@/components/docs/TableOfContents";
 import { cn } from "@/lib/utils";
+import { isOSS } from "@/lib/env";
 
 const DISPLAY_FONT = '"Cabinet Grotesk", "Space Grotesk", sans-serif';
+
+/**
+ * OSS ships this route but not the markdown behind it. Two copies of the same
+ * docs would drift, so a local instance sends visitors to the hosted docs —
+ * which document both editions, with a section written specifically for
+ * self-hosting. Deep links are preserved so `/docs/self-hosting/sharing`
+ * lands on the same page.
+ */
+const DOCS_ORIGIN = "https://livefolio.cloud";
+const OSS_DOCS_ENTRY = "/docs/self-hosting";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -187,6 +201,13 @@ export default async function DocsPage({
   params: Promise<PageParams>;
 }) {
   const { slug } = await params;
+
+  // Self-hosted instances have no local docs content — hand off to the
+  // hosted docs (see DOCS_ORIGIN above).
+  if (isOSS) {
+    const target = slug && slug.length > 0 ? `/docs/${slug.join("/")}` : OSS_DOCS_ENTRY;
+    redirect(`${DOCS_ORIGIN}${target}`);
+  }
 
   // Landing page for /docs
   if (!slug || slug.length === 0) {
