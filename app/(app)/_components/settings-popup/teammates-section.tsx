@@ -16,7 +16,7 @@ export function TeammatesSection() {
     billingUsage, isAdmin,
     teammates, loadingTeammates,
     inviteEmail, setInviteEmail, inviteRole, setInviteRole, invitingTeammate,
-    handleInviteTeammate, showUpgradeCTA,
+    handleInviteTeammate, inviteBlocked, needsSeatChange, isCompedPlan,
     isUpdatingRole, isRemovingTeammate, handleUpdateTeammateRole, handleRemoveTeammate,
     handleBillingAction, loadingBilling,
   } = useBillingTeammates();
@@ -39,7 +39,7 @@ export function TeammatesSection() {
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-ink">Invite a teammate</span>
-                <span className="text-xs text-ink/60">Free &amp; Pro: 1 seat • Team: unlimited</span>
+                <span className="text-xs text-ink/60">Free &amp; Pro: 1 seat • Team: 1 per paid seat</span>
               </div>
               <form onSubmit={handleInviteTeammate} className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
@@ -67,18 +67,27 @@ export function TeammatesSection() {
                 </button>
               </form>
 
-              {showUpgradeCTA && (
+              {inviteBlocked && (
                 <div className="space-y-2 rounded-lg bg-[var(--app-accent)]/5 p-3">
                   <p className="text-[13px] font-medium text-ink">
-                    Teammate seating is a Team plan feature.
+                    {needsSeatChange
+                      ? 'Every seat on your plan is taken.'
+                      : 'Teammate seating is a Team plan feature.'}
+                  </p>
+                  <p className="text-xs leading-relaxed text-ink/60">
+                    {needsSeatChange
+                      ? 'Add seats in Billing to invite more people.'
+                      : 'Switch to Team from Billing to invite your team.'}
                   </p>
                   <button
                     type="button"
-                    onClick={() => handleBillingAction({ intent: 'manage' })}
+                    onClick={() => handleBillingAction({ intent: isCompedPlan ? 'switch' : 'manage' })}
                     disabled={loadingBilling}
                     className="h-8 rounded-lg bg-[var(--app-accent)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--app-accent)]/90"
                   >
-                    Upgrade to Team
+                    {/* The only paid tier seating is sold on, so this is
+                        always "Team" — the picker defaults to it anyway. */}
+                    {needsSeatChange ? 'Add seats in Billing' : 'Upgrade to Team'}
                   </button>
                 </div>
               )}

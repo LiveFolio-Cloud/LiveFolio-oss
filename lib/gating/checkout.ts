@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getStripe } from '@/lib/stripe';
+import { getStripe, resolveStripeCustomer } from '@/lib/stripe';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getEnterpriseAdminClient } from '@/ee/db/supabase';
 import { MOCK_PAYMENTS } from '@/lib/env';
@@ -230,37 +230,23 @@ export async function createGateCheckoutSession(params: {
   const creatorAccountId: string = connectedOwner.stripe_account_id;
 
   // ── 3. Buyer platform customer (lazy-create + persist) ──
-  const { data: profile, error: profileErr } = await supabaseAdmin
-    .from('profiles')
-    .select('stripe_customer_id')
-    .eq('id', userId)
-    .maybeSingle();
+  // The auth context does not always carry an email, so fall back to the
+  // admin lookup before handing off to the shared resolver.
+  let buyerEmail: string | null = email;
+  if (!buyerEmail) {
+    const adminClient = getEnterpriseAdminClient();
+    if (adminClient) {
+      const { data } = await adminClient.auth.admin.getUserById(userId);
+      buyerEmail = data?.user?.email ?? null;
+    }
+  }
 
-  if (profileErr) {
-    console.error('Gate checkout: buyer profile lookup failed:', profileErr.message);
+  const resolved = await resolveStripeCustomer(stripe, supabaseAdmin, 'profile', userId, { email: buyerEmail });
+  if (!resolved.ok) {
+    console.error('Gate checkout: could not resolve buyer customer:', resolved.code, resolved.message);
     return { ok: false, code: 'FAILED', status: 500, message: 'Failed to load buyer profile.' };
   }
-
-  let customerId: string | null = (profile?.stripe_customer_id as string | null) ?? null;
-  if (!customerId) {
-    let buyerEmail: string | null = email;
-    if (!buyerEmail) {
-      const adminClient = getEnterpriseAdminClient();
-      if (adminClient) {
-        const { data } = await adminClient.auth.admin.getUserById(userId);
-        buyerEmail = data?.user?.email ?? null;
-      }
-    }
-    const customer = await stripe.customers.create({
-      email: buyerEmail || undefined,
-      metadata: { userId },
-    });
-    customerId = customer.id;
-    await supabaseAdmin
-      .from('profiles')
-      .update({ stripe_customer_id: customerId })
-      .eq('id', userId);
-  }
+  const customerId = resolved.customerId;
 
   // ── 4. Checkout session (destination charge) ──
   const amountCents = config.amountCents;

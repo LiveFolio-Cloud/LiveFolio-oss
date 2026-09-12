@@ -44,7 +44,8 @@ export function useBillingTeammates() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'Admin' | 'Member'>('Member');
   const [invitingTeammate, setInvitingTeammate] = useState(false);
-  const [showUpgradeCTA, setShowUpgradeCTA] = useState(false);
+  /** Set when an invite was refused for plan/seat reasons; cleared on success. */
+  const [inviteBlocked, setInviteBlocked] = useState(false);
   const [isUpdatingRole, setIsUpdatingRole] = useState<string | null>(null);
   const [isRemovingTeammate, setIsRemovingTeammate] = useState<string | null>(null);
 
@@ -56,6 +57,15 @@ export function useBillingTeammates() {
   const isCompedPlan = !!billingUsage
     && billingUsage.plan !== 'Free'
     && !billingUsage.stripe_subscription_id;
+
+  /**
+   * Whether a blocked invite needs more SEATS rather than a different plan.
+   * A Team org at its seat cap is already on the right tier — directing it to
+   * "upgrade to Team" is a dead end, since the seat picker lives in Billing.
+   * Derived from the plan rather than sticky state so it cannot linger after
+   * the situation resolves.
+   */
+  const needsSeatChange = billingUsage?.plan === 'Team';
 
   const fetchBillingUsage = async () => {
     try {
@@ -100,14 +110,15 @@ export function useBillingTeammates() {
       if (res.ok) {
         toast({ variant: 'success', title: data.message || 'Invitation sent successfully!' });
         setInviteEmail('');
+        setInviteBlocked(false);
         fetchTeammates();
         fetchBillingUsage();
       } else {
-        if (data.needsUpgrade) {
-          setShowUpgradeCTA(true);
-        } else {
-          toast({ variant: 'error', title: data.error || 'Failed to send invitation.' });
-        }
+        // Always surface why the invite failed, and keep the CTA up until an
+        // invite actually succeeds — previously it could stick around after
+        // the situation resolved.
+        setInviteBlocked(true);
+        toast({ variant: 'error', title: data.error || 'Failed to send invitation.' });
       }
     } catch (err) {
       console.error('Invite teammate error:', err);
@@ -218,7 +229,7 @@ export function useBillingTeammates() {
     handleBillingAction, isCompedPlan, usagePct, nearLimit, storagePct, storageNearLimit,
     teammates, loadingTeammates, currentUserRole, isAdmin,
     inviteEmail, setInviteEmail, inviteRole, setInviteRole, invitingTeammate,
-    handleInviteTeammate, showUpgradeCTA, setShowUpgradeCTA,
+    handleInviteTeammate, inviteBlocked, needsSeatChange,
     isUpdatingRole, isRemovingTeammate, handleUpdateTeammateRole, handleRemoveTeammate,
   };
 }

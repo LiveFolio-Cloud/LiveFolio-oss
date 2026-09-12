@@ -15,3 +15,28 @@
 export function getStripe(): any {
   return null;
 }
+
+/**
+ * OSS counterpart of the Cloud customer resolver (lib/stripe.ts).
+ *
+ * No Stripe in OSS, so this always reports failure — which is the honest
+ * answer, and keeps lib/gating/checkout's existing error branch intact rather
+ * than letting it proceed with a customer ID that cannot exist. The return
+ * union is mirrored literally so callers narrow identically without importing
+ * the stripe package.
+ */
+export type StripeCustomerScope = 'organization' | 'profile';
+
+export type StripeCustomerResult =
+  | { ok: true; customerId: string }
+  | { ok: false; code: 'LOOKUP_FAILED' | 'CREATE_FAILED'; message: string };
+
+export async function resolveStripeCustomer(
+  _stripe: unknown, // eslint-disable-line @typescript-eslint/no-unused-vars -- stub mirrors the Cloud signature
+  _supabaseAdmin: unknown, // eslint-disable-line @typescript-eslint/no-unused-vars -- stub mirrors the Cloud signature
+  _scope: StripeCustomerScope, // eslint-disable-line @typescript-eslint/no-unused-vars -- stub mirrors the Cloud signature
+  _ownerId: string, // eslint-disable-line @typescript-eslint/no-unused-vars -- stub mirrors the Cloud signature
+  _opts: { email?: string | null; userId?: string | null } = {} // eslint-disable-line @typescript-eslint/no-unused-vars -- stub mirrors the Cloud signature
+): Promise<StripeCustomerResult> {
+  return { ok: false, code: 'CREATE_FAILED', message: 'Stripe is not available in OSS mode.' };
+}
