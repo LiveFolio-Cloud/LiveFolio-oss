@@ -37,18 +37,18 @@ export function TunnelMenuContent({ tunnel }: { tunnel: ReturnType<typeof useTun
 
   return (
     <div className="w-72 space-y-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold text-ink">Tunnel</span>
+      {/* No heading — the menu surface already titles this "Tunnel". */}
+      <div className="flex items-center gap-1.5">
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${tunnelActive ? 'bg-emerald-500' : 'bg-ink/30'}`}
+        />
         <span
           className={
             tunnelActive
-              ? 'inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600'
-              : 'inline-flex items-center gap-1.5 text-[11px] font-medium text-ink/50'
+              ? 'text-[11px] font-semibold text-emerald-600'
+              : 'text-[11px] font-medium text-ink/50'
           }
         >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${tunnelActive ? 'bg-emerald-500' : 'bg-ink/30'}`}
-          />
           {tunnelActive ? 'Live' : 'Offline'}
         </span>
       </div>

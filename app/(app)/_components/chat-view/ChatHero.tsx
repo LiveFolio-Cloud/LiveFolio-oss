@@ -18,7 +18,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  Send, Plus, Palette, Paperclip, Zap, RefreshCw, Check,
+  Send, Plus, Palette, Paperclip, Zap, RefreshCw, Check, Globe,
   Image as ImageIcon, X, FileText, ChevronDown, ArrowUpRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -27,6 +27,7 @@ import { Toggle } from '../settings-popup/toggle';
 import { Dropdown } from '@/components/ui/dropdown';
 import { useSettingsPopup } from '../settings-popup';
 import { LocalModelKeys } from '@/components/chat/LocalModelKeys';
+import { useTunnel } from '@/lib/app-shell/use-tunnel';
 import { isCloud, isOSS } from '@/lib/env';
 import {
   type PendingMode,
@@ -125,6 +126,9 @@ export function ChatHero() {
   const [selectedLibraries, setSelectedLibraries] = useState<string[]>(DESIGN_DEFAULTS.libraries);
   const [isDesignDrawerOpen, setIsDesignDrawerOpen] = useState(false);
   const [availableDesignSystems, setAvailableDesignSystems] = useState<{ id: string; name: string; description: string; thumbnail: string }[]>([]);
+
+  // Inert outside OSS — the hook gates itself.
+  const tunnel = useTunnel();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -462,6 +466,33 @@ export function ChatHero() {
         onChange={handleFilePick} />
       <input ref={imageInputRef} type="file" className="hidden" multiple
         accept="image/*" onChange={handleFilePick} />
+
+      {/* OSS: tunnel state, so it's visible from the home view too — share
+          links only work while this is live, and it's easy to forget. Same
+          state as the folio header's globe (one polled hook). */}
+      {isOSS && (
+        <div className="flex shrink-0 justify-end px-4 pt-3">
+          <button
+            type="button"
+            onClick={() => void tunnel.toggle()}
+            disabled={tunnel.toggling}
+            title={
+              tunnel.tunnelActive
+                ? tunnel.tunnelUrl || 'Tunnel live'
+                : 'Start a public tunnel so share links work from other devices'
+            }
+            className={cn(
+              'inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50',
+              tunnel.tunnelActive
+                ? 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15'
+                : 'bg-[#0F0F0D]/5 text-ink/55 hover:text-ink dark:bg-[#F4F4F0]/10'
+            )}
+          >
+            <Globe size={12} />
+            {tunnel.toggling ? 'Working…' : tunnel.tunnelActive ? 'Tunnel live' : 'Go live'}
+          </button>
+        </div>
+      )}
 
       {/* Messages Area — centered column like ChatGPT */}
       <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-6">

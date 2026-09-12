@@ -22,6 +22,8 @@ export interface OrganizationQuota {
   monthly_message_limit: number;
   /** Stripe renewal state — never set in OSS (no billing). */
   subscription_status?: string | null;
+  /** Stripe subscription — always null in OSS (no billing). */
+  stripe_subscription_id?: string | null;
 }
 
 export interface UserQuota {

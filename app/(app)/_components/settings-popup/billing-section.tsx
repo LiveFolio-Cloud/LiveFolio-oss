@@ -13,7 +13,7 @@ import { useBillingTeammates } from './use-billing-teammates';
 export function BillingSection() {
   const {
     billingUsage, loadingBilling, billingError, teamSeats, setTeamSeats, plan, setPlan,
-    handleBillingAction, usagePct, nearLimit, storagePct, storageNearLimit, isAdmin,
+    handleBillingAction, isCompedPlan, usagePct, nearLimit, storagePct, storageNearLimit, isAdmin,
   } = useBillingTeammates();
 
   if (!isAdmin) return null;
@@ -35,7 +35,7 @@ export function BillingSection() {
                   in the meantime. Update your card with{' '}
                   <button
                     type="button"
-                    onClick={handleBillingAction}
+                    onClick={() => handleBillingAction({ intent: 'manage' })}
                     className="cursor-pointer font-semibold text-[var(--app-accent)] underline-offset-2 hover:underline"
                   >
                     Manage Subscription
@@ -108,7 +108,7 @@ export function BillingSection() {
               </div>
             )}
 
-            {(!billingUsage || billingUsage.plan === 'Free') && (
+            {(!billingUsage || billingUsage.plan === 'Free' || isCompedPlan) && (
               <div className="space-y-2.5">
                 <div className="grid grid-cols-2 gap-1.5">
                   {([
@@ -132,10 +132,17 @@ export function BillingSection() {
                     </button>
                   ))}
                 </div>
-                <p className="text-[11px] leading-relaxed text-ink/45">
-                  Need SSO, audit or dedicated infrastructure?{' '}
-                  <a href="mailto:hello@livefolio.cloud" className="font-semibold text-[var(--app-accent)]">Enterprise — contact us</a>
-                </p>
+                {isCompedPlan ? (
+                  <p className="text-[11px] leading-relaxed text-ink/45">
+                    This plan was granted to your workspace and isn&apos;t billed. Selecting a
+                    plan above starts a paid subscription.
+                  </p>
+                ) : (
+                  <p className="text-[11px] leading-relaxed text-ink/45">
+                    Need SSO, audit or dedicated infrastructure?{' '}
+                    <a href="mailto:hello@livefolio.cloud" className="font-semibold text-[var(--app-accent)]">Enterprise — contact us</a>
+                  </p>
+                )}
                 {plan === 'Team' ? (
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-1.5 text-sm font-medium text-ink">
@@ -171,11 +178,17 @@ export function BillingSection() {
             <div className="pt-1">
               <button
                 type="button"
-                onClick={handleBillingAction}
+                onClick={() => handleBillingAction({ intent: isCompedPlan ? 'switch' : 'manage' })}
                 disabled={loadingBilling}
                 className="h-8 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-semibold text-white transition-colors hover:bg-[var(--app-accent)]/90 disabled:opacity-50"
               >
-                {loadingBilling ? 'Processing…' : billingUsage?.plan === 'Free' ? `Upgrade to ${plan}` : 'Manage Subscription'}
+                {loadingBilling
+                  ? 'Processing…'
+                  : billingUsage?.plan === 'Free'
+                    ? `Upgrade to ${plan}`
+                    : isCompedPlan
+                      ? `Switch to ${plan}`
+                      : 'Manage Subscription'}
               </button>
             </div>
 

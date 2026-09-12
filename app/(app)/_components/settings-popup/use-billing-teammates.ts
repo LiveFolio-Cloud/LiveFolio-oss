@@ -17,6 +17,8 @@ export interface BillingUsage {
   storage_limit_bytes?: number;
   /** Stripe renewal state — 'past_due' when the latest invoice failed. */
   subscription_status?: string | null;
+  /** Null when the plan was granted out-of-band (comped/manual), not purchased. */
+  stripe_subscription_id?: string | null;
 }
 
 export interface Teammate {
@@ -45,6 +47,15 @@ export function useBillingTeammates() {
   const [showUpgradeCTA, setShowUpgradeCTA] = useState(false);
   const [isUpdatingRole, setIsUpdatingRole] = useState<string | null>(null);
   const [isRemovingTeammate, setIsRemovingTeammate] = useState<string | null>(null);
+
+  /**
+   * A paid plan with no Stripe subscription was granted out-of-band (comped or
+   * manual), so the Billing Portal has nothing to manage for it — sending the
+   * user there is a dead end. Such an org checks out a plan to change it.
+   */
+  const isCompedPlan = !!billingUsage
+    && billingUsage.plan !== 'Free'
+    && !billingUsage.stripe_subscription_id;
 
   const fetchBillingUsage = async () => {
     try {
@@ -145,12 +156,16 @@ export function useBillingTeammates() {
     }
   };
 
-  const handleBillingAction = async () => {
+  const handleBillingAction = async (opts: { intent?: 'manage' | 'switch' } = {}) => {
     setLoadingBilling(true);
     setBillingError(null);
     try {
+      // A comped org can reach checkout too, but only when the user actually
+      // picked a plan — otherwise the picker's presence alone would hijack the
+      // plain "Manage Subscription" intent.
       const isUpgrading = !billingUsage || billingUsage.plan === 'Free';
-      const endpoint = isUpgrading ? '/api/billing/checkout' : '/api/billing/portal';
+      const isSwitching = opts.intent === 'switch' && isCompedPlan;
+      const endpoint = isUpgrading || isSwitching ? '/api/billing/checkout' : '/api/billing/portal';
       const body = isUpgrading ? { plan, seats: teamSeats } : {};
 
       const res = await fetch(endpoint, {
@@ -200,7 +215,7 @@ export function useBillingTeammates() {
 
   return {
     billingUsage, loadingBilling, billingError, teamSeats, setTeamSeats, plan, setPlan,
-    handleBillingAction, usagePct, nearLimit, storagePct, storageNearLimit,
+    handleBillingAction, isCompedPlan, usagePct, nearLimit, storagePct, storageNearLimit,
     teammates, loadingTeammates, currentUserRole, isAdmin,
     inviteEmail, setInviteEmail, inviteRole, setInviteRole, invitingTeammate,
     handleInviteTeammate, showUpgradeCTA, setShowUpgradeCTA,

@@ -74,7 +74,7 @@ export function TeammatesSection() {
                   </p>
                   <button
                     type="button"
-                    onClick={handleBillingAction}
+                    onClick={() => handleBillingAction({ intent: 'manage' })}
                     disabled={loadingBilling}
                     className="h-8 rounded-lg bg-[var(--app-accent)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--app-accent)]/90"
                   >
