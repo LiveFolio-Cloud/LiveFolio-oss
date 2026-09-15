@@ -19,6 +19,7 @@ import { PROFILE_BANNERS, isPresetBanner } from '@/lib/profile-banners';
 import { cn } from '@/lib/utils';
 import { SectionShell } from './section-shell';
 import { Toggle } from './toggle';
+import { useSettingsPopup } from './settings-context';
 import FollowCounts from '@/components/profile/FollowCounts';
 import { LocalModelKeys } from '@/components/chat/LocalModelKeys';
 
@@ -445,6 +446,8 @@ function OssEngineRows() {
 }
 
 export function GeneralSection() {
+  const { closePopup } = useSettingsPopup();
+
   return (
     <>
       <SectionShell icon={User} title={isCloud ? 'Profile' : 'General'}>
@@ -460,6 +463,10 @@ export function GeneralSection() {
         </div>
         <Link
           href="/docs"
+          // Same reason SignOutButton closes explicitly: the popup modal lives
+          // in the ROOT layout, so it survives client-side navigation and would
+          // otherwise sit on top of /docs.
+          onClick={closePopup}
           className="flex items-center gap-1.5 rounded-lg px-1 py-0.5 text-[13px] font-medium text-ink/70 transition-colors hover:text-ink"
         >
           <BookOpen size={13} className="text-ink/40" />

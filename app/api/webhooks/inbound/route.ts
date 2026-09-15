@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { headers } from 'next/headers';
 import { runTransaction, type HTMLFile } from '@/lib/db';
 import { isOSS } from '@/lib/env';
-import { isLocalHost } from '@/lib/network';
+import { isLocalHost, getFolioEditUrl } from '@/lib/network';
 import { supabaseAdmin, transformFolioRecord, transformToFolioRecord, type FolioRecord } from '@/lib/supabase';
 import { assertStorageQuota } from '@/ee/middleware/usageCapping';
 import { FOLIO_DEFAULTS, VERSION_MESSAGES } from '@/lib/folio-defaults';
@@ -22,7 +22,8 @@ import { ensureOwnerHandle } from '@/lib/handles-server';
  *   { "title": "...", "initial_html": "<html>…</html>" }
  *
  * Response mirrors MCP create_project: { success, project_id, share_url,
- * studio_url } so existing agent/automation parsing patterns carry over.
+ * edit_url, studio_url } — `studio_url` is a deprecated alias of `edit_url`,
+ * kept so existing agent/automation parsing patterns carry over.
  *
  * Auth model:
  * - Cloud: middleware validates the Bearer key (or `?key=`) against
@@ -235,7 +236,8 @@ export async function POST(request: Request) {
         success: true,
         project_id: created.id,
         share_url: `${shareBase}/share/${created.id}`,
-        studio_url: `${origin}/studio/${created.id}`,
+        edit_url: getFolioEditUrl(created.id, origin),
+        studio_url: getFolioEditUrl(created.id, origin),
       });
     }
 
@@ -247,7 +249,8 @@ export async function POST(request: Request) {
       success: true,
       project_id: cleanId,
       share_url: `${shareBase}/share/${cleanId}`,
-      studio_url: `${origin}/studio/${cleanId}`,
+      edit_url: getFolioEditUrl(cleanId, origin),
+      studio_url: getFolioEditUrl(cleanId, origin),
     });
   } catch (err) {
     console.error('[Webhook inbound] create failed:', err);

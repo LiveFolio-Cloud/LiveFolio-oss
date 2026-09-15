@@ -19,6 +19,9 @@ export interface BillingUsage {
   subscription_status?: string | null;
   /** Null when the plan was granted out-of-band (comped/manual), not purchased. */
   stripe_subscription_id?: string | null;
+  /** Set when the subscription is scheduled to end; cancel_at is when. */
+  cancel_at_period_end?: boolean;
+  cancel_at?: string | null;
 }
 
 export interface Teammate {
@@ -33,6 +36,12 @@ export function useBillingTeammates() {
   const { toast } = useToast();
 
   const [billingUsage, setBillingUsage] = useState<BillingUsage | null>(null);
+  /**
+   * True until the first usage response lands. Without it the section renders
+   * its "no usage yet" branch for a frame, flashing the Free plan picker at
+   * paying subscribers before their real plan arrives.
+   */
+  const [loadingUsage, setLoadingUsage] = useState(true);
   const [loadingBilling, setLoadingBilling] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [teamSeats, setTeamSeats] = useState(5);
@@ -68,6 +77,7 @@ export function useBillingTeammates() {
   const needsSeatChange = billingUsage?.plan === 'Team';
 
   const fetchBillingUsage = async () => {
+    setLoadingUsage(true);
     try {
       const res = await fetch('/api/billing/usage');
       if (res.ok) {
@@ -76,6 +86,8 @@ export function useBillingTeammates() {
       }
     } catch (err) {
       console.error('Failed to load billing usage:', err);
+    } finally {
+      setLoadingUsage(false);
     }
   };
 
@@ -225,7 +237,7 @@ export function useBillingTeammates() {
   const isAdmin = currentUserRole !== 'Member';
 
   return {
-    billingUsage, loadingBilling, billingError, teamSeats, setTeamSeats, plan, setPlan,
+    billingUsage, loadingBilling, loadingUsage, billingError, teamSeats, setTeamSeats, plan, setPlan,
     handleBillingAction, isCompedPlan, usagePct, nearLimit, storagePct, storageNearLimit,
     teammates, loadingTeammates, currentUserRole, isAdmin,
     inviteEmail, setInviteEmail, inviteRole, setInviteRole, invitingTeammate,

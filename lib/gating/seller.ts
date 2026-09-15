@@ -1,6 +1,10 @@
 import { getStripe } from '@/lib/stripe';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getEnterpriseAdminClient } from '@/ee/db/supabase';
+import {
+  isSupportedCreatorCountry,
+  UNSUPPORTED_COUNTRY_MESSAGE,
+} from '@/lib/gating/creator-countries';
 
 /**
  * Stripe Connect seller onboarding — shared by the REST route
@@ -63,6 +67,27 @@ export async function createSellerOnboardingLink(params: {
   // Reuse a previously created account that is still onboarding — pressing
   // Connect twice must not orphan accounts.
   let accountId: string | null = existing?.stripe_account_id || null;
+
+  // A country outside the payout corridor cannot be fixed by onboarding again,
+  // so refuse before minting a link the creator could never complete. The
+  // country is chosen inside Stripe's hosted flow and fixed at account
+  // creation, so this only has anything to check for a reused account.
+  if (accountId) {
+    try {
+      const account = await stripe.accounts.retrieve(accountId);
+      if (account.country && !isSupportedCreatorCountry(account.country)) {
+        return {
+          ok: false,
+          code: 'UNSUPPORTED_COUNTRY',
+          status: 400,
+          message: UNSUPPORTED_COUNTRY_MESSAGE,
+        };
+      }
+    } catch (err) {
+      // A stale or deleted account id must not block a fresh onboarding.
+      console.error('Connect start: could not read existing account:', err);
+    }
+  }
 
   if (!accountId) {
     let userEmail: string | null = email;

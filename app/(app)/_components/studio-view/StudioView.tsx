@@ -250,8 +250,11 @@ export function StudioView() {
   const [isVisualEditMode, setIsVisualEditMode] = useState(false);
   const [hasUnsavedVisualEdits, setHasUnsavedVisualEdits] = useState(false);
   // Optional commit message for the visual-edit bar — blank = auto-describe
-  // the change from the line diff ("Updated lines X–Y").
+  // the change from the line diff ("Updated lines X–Y"). The field is opt-in:
+  // Save is the primary action and the note is revealed by a checkbox, so the
+  // bar's default state is a single button, not an empty text box.
   const [visualEditMsg, setVisualEditMsg] = useState('');
+  const [showCommitNote, setShowCommitNote] = useState(false);
   // Radial-dial state (mobile tools fan + More sheet) — replaces the old FAB.
   const [isDialOpen, setIsDialOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -2581,10 +2584,14 @@ export function StudioView() {
                      {/* Floating canvas tools — desktop only (≥lg): clean icons
                          + tooltips from the shared registry. They overlay the
                          folio itself, so they stay visible in every sidebar
-                         state (open or collapsed). Right-middle, NOT top-right:
-                         folio headers/hero content stay uncovered. */}
-                     <div className="hidden lg:flex absolute right-3 top-1/2 -translate-y-1/2 flex-col gap-2 z-30">
-                         {STUDIO_TOOLS.map((tool) => {
+                         state (open or collapsed). Left-middle, NOT top-left:
+                         the rail sits where a folio's own nav usually starts,
+                         and folio headers/hero content stay uncovered.
+                         Entrance is staggered left-to-right down the column;
+                         the icon lifts on hover and keeps floating while the
+                         tool is armed, so a live tool is visible at a glance. */}
+                     <div className="hidden lg:flex absolute left-3 top-1/2 -translate-y-1/2 flex-col gap-2 z-30">
+                         {STUDIO_TOOLS.map((tool, index) => {
                            const isActive = activeToolId === tool.id;
                            const Icon = tool.icon;
                            return (
@@ -2595,14 +2602,25 @@ export function StudioView() {
                                title={tool.title}
                                aria-label={tool.title}
                                aria-pressed={isActive}
+                               style={{ animationDelay: `${index * 70}ms` }}
                                className={cn(
-                                 "h-11 w-11 rounded-lg border shadow-md transition-dub cursor-pointer grid place-items-center",
+                                 "group animate-tool-enter h-11 w-11 rounded-lg border shadow-md transition-dub duration-200 cursor-pointer grid place-items-center hover:-translate-x-0.5 motion-reduce:transition-none",
                                  isActive
                                    ? 'bg-[var(--app-accent)] text-white border-[var(--app-accent)] shadow-[var(--app-accent)]/25'
                                    : 'bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md border-zinc-200/60 dark:border-zinc-800/60 text-zinc-600 dark:text-zinc-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-zinc-950 dark:hover:text-zinc-50'
                                )}
                              >
-                               <Icon size={17} strokeWidth={2} />
+                               <span
+                                 style={isActive ? { animationDelay: `${index * 130}ms` } : undefined}
+                                 className={cn(
+                                   "inline-flex will-change-transform",
+                                   isActive
+                                     ? "animate-tool-icon-float motion-reduce:animate-none"
+                                     : "group-hover:animate-tool-icon-lift motion-reduce:group-hover:animate-none"
+                                 )}
+                               >
+                                 <Icon size={17} strokeWidth={2} />
+                               </span>
                              </button>
                            );
                          })}
@@ -2630,14 +2648,7 @@ export function StudioView() {
                      )}
 
                     {hasUnsavedVisualEdits && (
-                       <div className="absolute bottom-24 left-1/2 z-[70] w-[calc(100%-2.5rem)] max-w-[540px] -translate-x-1/2 animate-slideUp rounded-2xl bg-white/95 px-4 py-3 shadow-2xl ring-1 ring-black/5 backdrop-blur-md dark:bg-zinc-900/95 dark:ring-white/10 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 lg:bottom-8 lg:px-6 lg:py-3.5">
-                          <div className="flex items-center gap-2">
-                             <div className="w-1.5 h-1.5 bg-[var(--app-accent)] animate-pulse" />
-                             <span className="text-sm font-bold text-zinc-500 dark:text-zinc-400 tracking-tight">Unsaved Visual Edits</span>
-                          </div>
-
-                          <div className="hidden h-6 w-px bg-zinc-100 dark:bg-zinc-800 sm:block" />
-
+                       <div className="absolute bottom-24 left-1/2 z-[70] w-[calc(100%-2.5rem)] max-w-[540px] -translate-x-1/2 animate-slideUp rounded-2xl bg-white/95 px-4 py-3 shadow-2xl ring-1 ring-black/5 backdrop-blur-md dark:bg-zinc-900/95 dark:ring-white/10 lg:bottom-8 lg:px-6 lg:py-3.5">
                           <form
                             onSubmit={async (e) => {
                               e.preventDefault();
@@ -2645,45 +2656,75 @@ export function StudioView() {
                               const message = typed || autoEditMessage;
                               await handleSaveModifiedCode({ ...activeVersionObj!.files, [activeFilename]: editorCode }, message);
                               setVisualEditMsg('');
+                              setShowCommitNote(false);
                               setHasUnsavedVisualEdits(false);
                             }}
-                            className="flex-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4"
+                            className="space-y-3"
                           >
-                             <div className="flex-1 flex flex-col gap-1 min-w-0">
-                                <input
-                                  value={visualEditMsg}
-                                  onChange={(e) => setVisualEditMsg(e.target.value)}
-                                  placeholder="Describe your changes (optional)"
-                                  aria-label="Commit message — optional"
-                                  className="w-full select-text text-[11px] font-medium bg-zinc-50/50 dark:bg-zinc-950/50 border border-zinc-200/60 dark:border-zinc-800/60 rounded-lg px-3 py-1.5 focus:outline-none focus:border-[var(--app-accent)]/40 focus:ring-4 focus:ring-[var(--app-accent)]/5 placeholder:text-zinc-300 dark:placeholder:text-zinc-600 text-zinc-700 dark:text-zinc-100 transition-all"
-                                />
-                                {!visualEditMsg.trim() && (
-                                  <span className="truncate text-[10px] font-medium text-zinc-400 dark:text-zinc-500" title={autoEditMessage}>
-                                    Will save as: “{autoEditMessage}”
-                                  </span>
-                                )}
+                             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                                <div className="flex items-center gap-2">
+                                   <div className="w-1.5 h-1.5 bg-[var(--app-accent)] animate-pulse" />
+                                   <span className="text-sm font-bold text-zinc-500 dark:text-zinc-400 tracking-tight">Unsaved Visual Edits</span>
+                                </div>
+
+                                {/* Opt-in commit note. Save above all: the bar's
+                                    resting state is one button, and the field
+                                    only exists once this is ticked. */}
+                                <label className="flex cursor-pointer select-none items-center gap-1.5">
+                                   <input
+                                     type="checkbox"
+                                     checked={showCommitNote}
+                                     onChange={(e) => setShowCommitNote(e.target.checked)}
+                                     className="h-3.5 w-3.5 rounded accent-[var(--app-accent)] cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--app-accent)]"
+                                   />
+                                   <span className="text-xs font-bold tracking-tight text-zinc-500 dark:text-zinc-400">Add a commit note</span>
+                                </label>
+
+                                <div className="flex items-center gap-3 sm:ml-auto">
+                                   <Button type="submit" size="sm" className="h-8 rounded-lg text-sm font-bold tracking-tight px-6 shadow-md bg-zinc-950 dark:bg-zinc-50 hover:bg-zinc-900 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 border-none transition-all">Save</Button>
+                                   <button
+                                     type="button"
+                                     className="text-xs font-bold tracking-tight text-zinc-400 dark:text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors px-2 cursor-pointer"
+                                     onClick={() => {
+                                       showConfirm(
+                                         "Discard Changes",
+                                         "Are you sure you want to discard all unsaved visual edits? This action cannot be undone.",
+                                         () => {
+                                           setVisualEditMsg('');
+                                           setShowCommitNote(false);
+                                           setHasUnsavedVisualEdits(false);
+                                           fetchProject();
+                                         },
+                                         'destructive'
+                                       );
+                                     }}
+                                   >
+                                     Discard
+                                   </button>
+                                </div>
                              </div>
-                             <div className="flex items-center gap-3">
-                                <Button type="submit" size="sm" className="h-8 rounded-lg text-sm font-bold tracking-tight px-6 shadow-md bg-zinc-950 dark:bg-zinc-50 hover:bg-zinc-900 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 border-none transition-all">Save</Button>
-                                <button
-                                  type="button"
-                                  className="text-xs font-bold tracking-tight text-zinc-400 dark:text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors px-2 cursor-pointer"
-                                  onClick={() => {
-                                    showConfirm(
-                                      "Discard Changes",
-                                      "Are you sure you want to discard all unsaved visual edits? This action cannot be undone.",
-                                      () => {
-                                        setVisualEditMsg('');
-                                        setHasUnsavedVisualEdits(false);
-                                        fetchProject();
-                                      },
-                                      'destructive'
-                                    );
-                                  }}
-                                >
-                                  Discard
-                                </button>
-                             </div>
+
+                             {/* Own row, and deliberately with no flex-grow:
+                                  a flex-basis:auto <input> with only min-w-0
+                                  still reports its intrinsic width before
+                                  the parent measures, which is what stretched
+                                  this bar and pushed Save off-screen. */}
+                             {showCommitNote && (
+                                <div className="space-y-1 animate-fade">
+                                   <input
+                                     value={visualEditMsg}
+                                     onChange={(e) => setVisualEditMsg(e.target.value)}
+                                     placeholder="Describe your changes…"
+                                     aria-label="Commit note — optional"
+                                     className="w-full select-text text-[11px] font-medium bg-zinc-50/50 dark:bg-zinc-950/50 border border-zinc-200/60 dark:border-zinc-800/60 rounded-lg px-3 py-1.5 focus:outline-none focus:border-[var(--app-accent)]/40 focus:ring-4 focus:ring-[var(--app-accent)]/5 placeholder:text-zinc-300 dark:placeholder:text-zinc-600 text-zinc-700 dark:text-zinc-100 transition-all"
+                                   />
+                                   {!visualEditMsg.trim() && (
+                                     <span className="block truncate text-[10px] font-medium text-zinc-400 dark:text-zinc-500" title={autoEditMessage}>
+                                       Will save as: “{autoEditMessage}”
+                                     </span>
+                                   )}
+                                </div>
+                             )}
                           </form>
                        </div>
                      )}

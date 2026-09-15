@@ -23,6 +23,24 @@ export function getPublicOrigin(request?: { headers: Headers }): string {
   return `${proto}://${host}`;
 }
 
+/**
+ * The canonical edit URL for a folio — where its owner opens it to edit.
+ *
+ * v2 replaced the standalone `/studio/{id}` route with the App Shell route
+ * `/app/{id}`. Nothing serves `/studio` any more, so any link built from the
+ * old path 404s (the MCP layer advertised it to agents for months). Every
+ * generator of an owner-facing folio link must go through this helper rather
+ * than re-hardcoding the path.
+ */
+export function getFolioEditPath(id: string): string {
+  return `/app/${id}`;
+}
+
+/** Absolute form of {@link getFolioEditPath}. */
+export function getFolioEditUrl(id: string, origin: string): string {
+  return `${origin.replace(/\/+$/, '')}${getFolioEditPath(id)}`;
+}
+
 export function isLocalHost(host: string | null): boolean {
   if (!host) return false; // Fail closed: a missing Host header is NOT local
 

@@ -8,7 +8,7 @@ import { decryptToken } from '@/lib/encryption';
 import { projectMemoryCache } from '@/lib/project-cache';
 import { extractUUIDFromSlug } from '@/lib/utils';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
-import { getPublicOrigin } from '@/lib/network';
+import { getPublicOrigin, getFolioEditUrl } from '@/lib/network';
 import crypto from 'crypto';
 
 import { buildCommentPinnedBlock } from '@/ee/integrations/slack/blocks';
@@ -262,8 +262,8 @@ export async function POST(
           return;
         }
 
-        const studioUrl = `${origin}/studio/${id}`;
-                const folioTitle = current.title || 'Untitled Folio';
+        const editUrl = getFolioEditUrl(id, origin);
+        const folioTitle = current.title || 'Untitled Folio';
 
         for (const integration of integrations) {
           if (integration.platform === 'slack') {
@@ -275,7 +275,7 @@ export async function POST(
                 folioTitle,
                 author: newComment.author,
                 text: newComment.text,
-                previewUrl: studioUrl
+                previewUrl: editUrl
               });
 
               await fetch('https://slack.com/api/chat.postMessage', {
@@ -306,7 +306,7 @@ export async function POST(
                     : `📌 New Comment Pinned on "${folioTitle}"`,
                   description: `**${newComment.author}:** "${newComment.text}"`,
                   color: isGeneralComment ? 3447003 : 5814783, // Blue for comments, Indigo for pins
-                  url: studioUrl,
+                  url: editUrl,
                   footer: { text: 'LiveFolio Studio Reviews' }
                 };
 
@@ -318,7 +318,7 @@ export async function POST(
                         type: 2, // BUTTON
                         style: 5, // LINK
                         label: isGeneralComment ? '💬 Reply to Comment' : '💬 Reply on Canvas',
-                        url: studioUrl
+                        url: editUrl
                       }
                     ]
                   }

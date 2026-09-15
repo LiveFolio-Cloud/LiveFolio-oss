@@ -12,7 +12,7 @@ import { useBillingTeammates } from './use-billing-teammates';
 
 export function BillingSection() {
   const {
-    billingUsage, loadingBilling, billingError, teamSeats, setTeamSeats, plan, setPlan,
+    billingUsage, loadingBilling, loadingUsage, billingError, teamSeats, setTeamSeats, plan, setPlan,
     handleBillingAction, isCompedPlan, usagePct, nearLimit, storagePct, storageNearLimit, isAdmin,
   } = useBillingTeammates();
 
@@ -23,9 +23,38 @@ export function BillingSection() {
   // paying customer their workspace mid-retry.
   const pastDue = billingUsage?.subscription_status === 'past_due';
 
+  // Scheduled cancellation: the period is already paid for, so the plan stays
+  // active until cancel_at. Surface the date rather than silently downgrading —
+  // this state used to be invisible because the webhook never recorded it.
+  const scheduledCancel = Boolean(billingUsage?.cancel_at_period_end);
+  const endsOn = billingUsage?.cancel_at
+    ? new Date(billingUsage.cancel_at).toLocaleDateString(undefined, {
+        day: 'numeric', month: 'short', year: 'numeric',
+      })
+    : null;
+
   return (
     <>
 <SectionShell icon={CreditCard} title="Billing & Quota">
+            {scheduledCancel && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2">
+                <AlertCircle size={13} className="mt-0.5 shrink-0 text-amber-600" />
+                <div className="min-w-0 text-[12px] leading-relaxed text-ink/70">
+                  <span className="font-semibold text-ink">
+                    {endsOn ? `Subscription ends ${endsOn}.` : 'Subscription is ending.'}
+                  </span>{' '}
+                  Your plan stays fully active until then.{' '}
+                  <button
+                    type="button"
+                    onClick={() => handleBillingAction({ intent: 'manage' })}
+                    className="cursor-pointer font-semibold text-[var(--app-accent)] underline-offset-2 hover:underline"
+                  >
+                    Resume subscription
+                  </button>{' '}
+                  to keep it running.
+                </div>
+              </div>
+            )}
             {pastDue && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2">
                 <AlertCircle size={13} className="mt-0.5 shrink-0 text-amber-600" />
@@ -108,7 +137,7 @@ export function BillingSection() {
               </div>
             )}
 
-            {(!billingUsage || billingUsage.plan === 'Free' || isCompedPlan) && (
+            {!loadingUsage && (!billingUsage || billingUsage.plan === 'Free' || isCompedPlan) && (
               <div className="space-y-2.5">
                 <div className="grid grid-cols-2 gap-1.5">
                   {([
@@ -188,8 +217,14 @@ export function BillingSection() {
                     ? `Upgrade to ${plan}`
                     : isCompedPlan
                       ? `Switch to ${plan}`
-                      : 'Manage Subscription'}
+                      : 'Change plan or cancel'}{' '}
               </button>
+              {billingUsage && billingUsage.plan !== 'Free' && !isCompedPlan && (
+                <p className="pt-1.5 text-[11px] leading-relaxed text-ink/45">
+                  Opens the Stripe billing portal to switch between Pro and Team,
+                  update your card, or cancel.
+                </p>
+              )}
             </div>
 
             {billingError && (

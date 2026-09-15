@@ -270,6 +270,40 @@ html {
   animation: radarSweep 6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Studio canvas tools — the left-edge trio (Edit / Comment / Fix with AI).
+ * These keyframes sit at the top level rather than inside the
+ * no-preference block above: the trio compounds its entrance with
+ * per-button `animation-delay` inline styles, and a keyframe reached only
+ * through a conditional `@media` is a fragile thing to stagger against. */
+@keyframes toolEnter {
+  from { opacity: 0; transform: translateX(-10px) scale(0.92); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes toolIconLift {
+  from { transform: translateY(2px) scale(0.95); }
+  to { transform: translateY(-2px) scale(1.1); }
+}
+
+@keyframes toolIconFloat {
+  0%, 100% { transform: translateY(-2px); }
+  50% { transform: translateY(2px); }
+}
+
+@utility animate-tool-enter {
+  animation: toolEnter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* `forwards`, not `both`: a tool that is already active on mount has a 0s
+ * delay, and a backwards fill would flash it at the resting transform first. */
+@utility animate-tool-icon-lift {
+  animation: toolIconLift 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@utility animate-tool-icon-float {
+  animation: toolIconFloat 2.4s ease-in-out infinite;
+}
+
 /* Reduced-motion: instant visibility, no animation */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade,
@@ -281,8 +315,17 @@ html {
 
   .animate-float,
   .animate-glow-pulse,
-  .animate-radar-sweep {
+  .animate-radar-sweep,
+  .animate-tool-enter,
+  .animate-tool-icon-lift,
+  .animate-tool-icon-float {
     animation: none;
+  }
+
+  /* Restate the lift's resting transform as a plain style so the hovered
+   * icon still responds to the pointer without motion. */
+  .animate-tool-icon-lift {
+    transform: translateY(-2px);
   }
 }
 

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase';
 import { GateTargetType } from './types';
+import { platformFeeCents, PLATFORM_FEE_BPS } from './fees';
 
 /**
  * Purchase grants: the server-side record of who bought access to what.
@@ -70,6 +71,30 @@ async function snapshotLicense(targetType: GateTargetType, targetId: string): Pr
 }
 
 /**
+ * Fee columns for a grant row.
+ *
+ * `platformFeeCents` is pure and deterministic, so recomputing it here yields
+ * the same number that was passed to Stripe as `application_fee_amount` at
+ * checkout (lib/gating/checkout.ts). Storing it — rather than recomputing at
+ * read time — is the point: a later change to STRIPE_PLATFORM_FEE_BPS must not
+ * rewrite what a past sale was actually charged.
+ *
+ * `PLATFORM_FEE_BPS` is stored alongside so a historical fee stays explicable
+ * after the rate moves.
+ */
+function grantFeeColumns(amountCents: number) {
+  const fee = platformFeeCents(amountCents);
+  return {
+    platform_fee_cents: fee,
+    platform_fee_bps: PLATFORM_FEE_BPS,
+    // What the creator receives. Stripe's own processing cost is absorbed by
+    // the platform (destination charge), so it is NOT deducted here — it is
+    // recorded separately in stripe_fee_cents and surfaced for transparency.
+    net_cents: amountCents - fee,
+  };
+}
+
+/**
  * Insert a grant from a completed Stripe checkout session.
  * Idempotent: stripe_session_id is UNIQUE — replays of the webhook are no-ops.
  */
@@ -101,6 +126,7 @@ export async function provisionGrant(input: ProvisionGrantInput): Promise<boolea
           granted_at: new Date().toISOString(),
           expires_at: expiresAt,
           license_snapshot: licenseSnapshot,
+          ...grantFeeColumns(input.amountCents),
         },
         { onConflict: 'stripe_session_id' }
       );
@@ -157,6 +183,7 @@ export async function claimPendingGrants(userId: string, email: string): Promise
             granted_at: new Date().toISOString(),
             expires_at: expiresAt,
             license_snapshot: licenseSnapshot,
+            ...grantFeeColumns(p.amount_cents),
           },
           { onConflict: 'stripe_session_id' }
         );

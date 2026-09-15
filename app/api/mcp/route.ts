@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { startTunnel, type Tunnel } from 'untun';
 import { isOSS } from '@/lib/env';
-import { isLocalHost } from '@/lib/network';
+import { isLocalHost, getFolioEditUrl } from '@/lib/network';
 import { supabaseAdmin, transformFolioRecord, transformToFolioRecord, FolioRecord } from '@/lib/supabase';
 import { headers } from 'next/headers';
 import { assertStorageQuota, getOrganizationQuota } from '@/ee/middleware/usageCapping';
@@ -1082,6 +1082,19 @@ async function handleToolCall(name: string, args: any, request?: Request) {
   }
 }
 
+/**
+ * The owner-facing folio links returned by every project tool.
+ *
+ * `edit_url` is the canonical name (v2 serves the editor at `/app/{id}`).
+ * `studio_url` is a deprecated alias kept so existing agent sessions and SDK
+ * consumers that read the old key don't break — it points at the same working
+ * URL, never the retired `/studio/{id}` route.
+ */
+function buildFolioLinks(id: string, origin: string): { edit_url: string; studio_url: string } {
+  const edit_url = getFolioEditUrl(id, origin);
+  return { edit_url, studio_url: edit_url };
+}
+
 function getRequestOrigin(request?: Request): string {
   // Use configured app URL first, then derive from request, never fall back to localhost
   if (process.env.NEXT_PUBLIC_APP_URL) {
@@ -1134,10 +1147,10 @@ async function handleListProjects(request?: Request) {
       share_url: activeUrl 
         ? `${activeUrl}/share/${p.id}` 
         : `${origin}/share/${p.id}`,
-      public_share_url: activeUrl 
-        ? `${activeUrl}/share/${p.id}` 
+      public_share_url: activeUrl
+        ? `${activeUrl}/share/${p.id}`
         : undefined,
-      studio_url: `${origin}/studio/${p.id}`
+      ...buildFolioLinks(p.id, origin)
     };
   });
 
@@ -1241,10 +1254,10 @@ async function handleGetProject(args: any, request?: Request) {
     share_url: activeUrl 
       ? `${activeUrl}/share/${project.id}` 
       : `${origin}/share/${project.id}`,
-    public_share_url: activeUrl 
-      ? `${activeUrl}/share/${project.id}` 
+    public_share_url: activeUrl
+      ? `${activeUrl}/share/${project.id}`
       : undefined,
-    studio_url: `${origin}/studio/${project.id}`
+    ...buildFolioLinks(project.id, origin)
   };
 }
 
@@ -1375,7 +1388,7 @@ async function handleCreateProject(args: any, request?: Request) {
       success: true,
       project_id: created.id,
       share_url: `${shareBase}/share/${created.id}`,
-      studio_url: `${origin}/studio/${created.id}`
+      ...buildFolioLinks(created.id, origin)
     };
   } else {
     await runTransaction(async (db) => {
@@ -1386,7 +1399,7 @@ async function handleCreateProject(args: any, request?: Request) {
       success: true,
       project_id: cleanId,
       share_url: `${shareBase}/share/${cleanId}`,
-      studio_url: `${origin}/studio/${cleanId}`
+      ...buildFolioLinks(cleanId, origin)
     };
   }
 }
@@ -1575,7 +1588,7 @@ async function handleUpdateProject(args: any, request?: Request) {
     project_id,
     versionId,
     share_url: `${shareBase}/share/${project_id}`,
-    studio_url: `${origin}/studio/${project_id}`
+    ...buildFolioLinks(project_id, origin)
   };
 }
 

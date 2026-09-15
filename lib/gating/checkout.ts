@@ -189,14 +189,21 @@ export async function createGateCheckoutSession(params: {
   }
 
   // ── 2. Creator: the target org's Owner with an ACTIVE Stripe account ──
+  // Owner-only by policy: the Owner is the org's payout beneficiary, so an
+  // Admin/Editor with a connected account is deliberately not eligible.
   if (!creatorOrgId) {
     return { ok: false, code: 'CREATOR_NOT_CONNECTED', status: 400 };
   }
+  // `order` is load-bearing, not cosmetic: with more than one connected Owner
+  // the winner is picked below with .find(), which takes the first row the
+  // query returns. Without a deterministic order the payout destination for a
+  // folio could differ between identical requests.
   const { data: members, error: membersErr } = await supabaseAdmin
     .from('organization_members')
     .select('user_id')
     .eq('organization_id', creatorOrgId)
-    .eq('role', 'Owner');
+    .eq('role', 'Owner')
+    .order('user_id', { ascending: true });
 
   if (membersErr || !members || members.length === 0) {
     return { ok: false, code: 'CREATOR_NOT_CONNECTED', status: 400 };
@@ -207,7 +214,8 @@ export async function createGateCheckoutSession(params: {
   const { data: ownerProfiles, error: ownerErr } = await supabaseAdmin
     .from('profiles')
     .select('id, stripe_account_id, stripe_account_status, account_status')
-    .in('id', ownerIds);
+    .in('id', ownerIds)
+    .order('id', { ascending: true });
 
   if (ownerErr) {
     console.error('Gate checkout: owner profile lookup failed:', ownerErr.message);

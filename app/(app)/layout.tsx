@@ -21,9 +21,9 @@
  * (not serializable across the RSC boundary); the pages underneath stay
  * server components.
  */
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShellFrame } from '@/components/app-shell/AppShellFrame';
 import { WorkspaceSidebar } from '@/app/(app)/_components/workspace-sidebar';
 import OnboardingTour from '@/components/app-shell/OnboardingTour';
@@ -49,6 +49,47 @@ function StripeConnectEarningsRedirect() {
 }
 
 /**
+ * Billing return path: `/app?billing=success|return|cancelled`.
+ *
+ * The Stripe checkout success/cancel URLs and the portal return_url used to
+ * point at `/settings`, which has never been a route — settings is this popup
+ * (the settings-context docstring already flagged `/settings` as a future
+ * deep-link). Every billing flow therefore ended on a 404 even when the
+ * payment succeeded.
+ *
+ * `return` is the portal hand-back: the customer may have changed or cancelled
+ * their subscription, so the usage is re-read to reflect the new state.
+ */
+function BillingRedirect() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const { openSection } = useSettingsPopup();
+  const handled = useRef(false);
+
+  useEffect(() => {
+    const v = params.get('billing');
+    // The webhook that writes the new plan may still be in flight when the
+    // browser lands here, so a server refresh re-reads it rather than showing
+    // the pre-checkout plan.
+    if (v === 'success' || v === 'return') router.refresh();
+    if (v === 'success' || v === 'return' || v === 'cancelled') openSection('billing');
+    if (!v || handled.current) return;
+    handled.current = true;
+
+    // Drop the one-shot billing params so a reload (or a shared URL) does not
+    // re-open the popup. session_id has served its purpose by now.
+    const next = new URLSearchParams(params.toString());
+    next.delete('billing');
+    next.delete('session_id');
+    next.delete('checkout_cancelled');
+    const qs = next.toString();
+    window.history.replaceState(null, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+  }, [params, openSection, router]);
+
+  return null;
+}
+
+/**
  * The frame itself lives INSIDE the settings provider so both slots can reach
  * the popup context: the sidebar's gear (P1-T01 `onOpenSettings` contract)
  * and the overlay's modal. The provider must wrap the frame element, so the
@@ -62,6 +103,7 @@ function ShellFrameWithSettings({ children }: { children: ReactNode }) {
     <>
       <Suspense fallback={null}>
         <StripeConnectEarningsRedirect />
+        <BillingRedirect />
       </Suspense>
       <AppShellFrame
       sidebar={(props) => (

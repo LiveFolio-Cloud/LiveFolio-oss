@@ -17,6 +17,12 @@ import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, Loader2, Trash2 } from 'lucide-react';
 import { createBrowserClient } from '@/lib/supabase';
 import type { PaidAccessConfig } from '@/lib/gating/types';
+import { MIN_AMOUNT_CENTS, MAX_AMOUNT_CENTS } from '@/lib/gating/price-bounds';
+import {
+  DEFAULT_PLATFORM_FEE_BPS,
+  computePlatformFee,
+  computeCreatorNet,
+} from '@/lib/gating/fee-model';
 import { Dropdown } from '@/components/ui/dropdown';
 import { cn } from '@/lib/utils';
 import { Toggle } from '../settings-popup/toggle';
@@ -327,7 +333,8 @@ export function GateConfig({
               <span className="text-[13px] text-ink/50">$</span>
               <input
                 type="number"
-                min={1}
+                min={MIN_AMOUNT_CENTS / 100}
+                max={MAX_AMOUNT_CENTS / 100}
                 step="0.01"
                 value={amountText}
                 disabled={disabled}
@@ -339,14 +346,36 @@ export function GateConfig({
                 onChange={(e) => {
                   setAmountText(e.target.value);
                   const d = parseFloat(e.target.value);
-                  if (!Number.isNaN(d) && d >= 1) {
-                    emitDebounced({ amountCents: Math.round(d * 100) });
+                  // Only emit an in-range price. The server REJECTS out-of-range
+                  // rather than clamping, so emitting one would fail the save —
+                  // and emitting on each keystroke meant typing "150" tried to
+                  // persist $1, which is below the floor and broke the write.
+                  if (Number.isNaN(d)) return;
+                  const cents = Math.round(d * 100);
+                  if (cents >= MIN_AMOUNT_CENTS && cents <= MAX_AMOUNT_CENTS) {
+                    emitDebounced({ amountCents: cents });
                   }
                 }}
                 placeholder="10"
                 className="h-full w-full bg-transparent text-[13px] text-ink placeholder:text-ink/50 focus:outline-none"
               />
             </div>
+            {/* Show the split at the point of sale. The fee is a percentage of
+                the buyer's price, so the creator always receives the rest —
+                stated here rather than discovered later in Earnings. */}
+            {config?.amountCents != null && config.amountCents >= MIN_AMOUNT_CENTS ? (
+              <p className="mt-1 text-[11px] leading-relaxed text-ink/45">
+                Buyer pays ${(config.amountCents / 100).toFixed(2)} ·{' '}
+                {DEFAULT_PLATFORM_FEE_BPS / 100}% platform fee $
+                {(computePlatformFee(config.amountCents) / 100).toFixed(2)} · you
+                receive ${(computeCreatorNet(config.amountCents) / 100).toFixed(2)}
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] leading-relaxed text-ink/45">
+                ${MIN_AMOUNT_CENTS / 100}–${(MAX_AMOUNT_CENTS / 100).toLocaleString()} USD.
+                LiveFolio takes {DEFAULT_PLATFORM_FEE_BPS / 100}%.
+              </p>
+            )}
           </LabeledRow>
 
           {/* Rental duration */}

@@ -24,6 +24,9 @@ export interface OrganizationQuota {
   subscription_status?: string | null;
   /** Stripe subscription — always null in OSS (no billing). */
   stripe_subscription_id?: string | null;
+  /** Scheduled cancellation — never set in OSS (no billing). */
+  cancel_at_period_end?: boolean;
+  cancel_at?: string | null;
 }
 
 export interface UserQuota {

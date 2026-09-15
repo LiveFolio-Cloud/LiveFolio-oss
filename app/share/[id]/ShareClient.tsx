@@ -824,10 +824,14 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
         {/* Floating pill bar — v2 chrome */}
         <div className="mx-4 mt-3 flex h-12 items-center justify-between gap-2 rounded-xl bg-white/85 px-3 shadow-sm ring-1 ring-black/5 backdrop-blur-md">
           <div className="flex items-center gap-1.5 min-w-0">
-            {/* Only show Studio link if user is authenticated (owner/editor), not for guests */}
-            {accessKey && (
+            {/* Edit link is for the owner only. The old gate was `accessKey`,
+                which is set for *guests* who unlocked a private folio — the
+                exact opposite of who should see it. `viewerAccess` already
+                reports 'owner' for private-key access (see the gate note
+                above), so owners keep the link and grantees/previewers don't. */}
+            {viewerAccess === 'owner' && (
               <Button variant="ghost" size="sm" asChild className="h-8 shrink-0 px-3 rounded-lg text-xs font-medium text-[#0F0F0D]/60 hover:text-[#0F0F0D]:text-[#F4F4F0] hover:bg-black/5:bg-white/10 transition-colors cursor-pointer">
-                <Link href={`/studio/${project.id}`}>Studio</Link>
+                <Link href={`/app/${project.id}`}>Edit</Link>
               </Button>
             )}
             <Button onClick={handleEnterFullscreen} className="h-8 shrink-0 px-3.5 rounded-full bg-[var(--lf-accent)] text-white text-xs font-semibold cursor-pointer flex items-center gap-1.5 hover:bg-[#0F0F0D]:bg-[#F4F4F0]:text-[#0F0F0D] transition-colors">

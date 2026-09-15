@@ -25,11 +25,22 @@ export interface ConnectSaleRow {
   status: string;
   grantedAt: string;
   expiresAt: string | null;
+  /** LiveFolio's cut as actually charged. */
+  platformFeeCents: number;
+  /** The bps in force at sale time; null on rows predating fee capture. */
+  platformFeeBps: number | null;
+  /** Stripe's processing cost; null when never captured (not the same as 0). */
+  stripeFeeCents: number | null;
+  /** What the creator receives: amountCents - platformFeeCents. */
+  netCents: number;
 }
 
 export interface ConnectSales {
   totalGrossCents: number;
   totalFeesCents: number;
+  totalStripeFeesCents: number;
+  /** At least one sale has no captured Stripe cost. */
+  stripeFeeMissing: boolean;
   totalNetCents: number;
   sales: ConnectSaleRow[];
 }
@@ -66,7 +77,11 @@ export function useStripeConnect() {
         const res = await fetch(path, { method: 'POST' });
         const data = await res.json().catch(() => ({}));
         if (res.ok) return data;
-        setError(data.error || 'Request failed.');
+        // Routes return a machine code in `error` and sometimes a
+        // human-readable `message` alongside it. Prefer the explanation —
+        // showing a bare code like UNSUPPORTED_COUNTRY tells the creator
+        // nothing about what to do.
+        setError(data.message || data.error || 'Request failed.');
         return null;
       } catch (err) {
         console.error(`POST ${path} failed:`, err);

@@ -2,7 +2,13 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { PaidAccessConfig, ResolvedGate } from './types';
 
 const ALLOWED_CURRENCIES = ['usd', 'eur', 'gbp'];
-const MIN_AMOUNT_CENTS = 100; // $1.00 — matches Stripe's USD floor
+
+// Imported for local use AND re-exported, so existing server callers keep
+// importing the bounds from here while the client UI can import the constants
+// module directly without pulling Supabase toward the browser bundle.
+import { MIN_AMOUNT_CENTS, MAX_AMOUNT_CENTS } from './price-bounds';
+export { MIN_AMOUNT_CENTS, MAX_AMOUNT_CENTS };
+
 const MIN_RENTAL_DAYS = 1;
 const MAX_RENTAL_DAYS = 3650;
 const MIN_PREVIEW_SECONDS = 5;
@@ -13,6 +19,11 @@ const MAX_PREVIEW_SECONDS = 600;
  * (MCP, REST files API, ai-create, Slack/Discord). Rejects instead of
  * clamping — invalid config should fail loudly at write time, not silently
  * change the price. `enabled: false` is a VALID config ("explicitly free").
+ *
+ * This is the ONLY place the folio price bounds are enforced, which is what
+ * makes them hold across every surface at once. Callers receive null and must
+ * surface that; they must not fall back to a default amount, or an
+ * out-of-bounds price would be silently rewritten to a valid one.
  */
 export function sanitizePaidAccess(input: unknown): PaidAccessConfig | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
@@ -20,14 +31,16 @@ export function sanitizePaidAccess(input: unknown): PaidAccessConfig | null {
 
   if (typeof raw.enabled !== 'boolean') return null;
   if (raw.priceType !== 'one_time' && raw.priceType !== 'rental' && raw.priceType !== 'subscription') return null;
-  if (!Number.isInteger(raw.amountCents) || (raw.amountCents as number) < MIN_AMOUNT_CENTS) return null;
+  if (!Number.isInteger(raw.amountCents)) return null;
+  const amountCents = raw.amountCents as number;
+  if (amountCents < MIN_AMOUNT_CENTS || amountCents > MAX_AMOUNT_CENTS) return null;
   if (typeof raw.currency !== 'string' || !ALLOWED_CURRENCIES.includes(raw.currency)) return null;
   if (raw.previewMode !== 'none' && raw.previewMode !== 'timed' && raw.previewMode !== 'first_page') return null;
 
   const config: PaidAccessConfig = {
     enabled: raw.enabled,
     priceType: raw.priceType,
-    amountCents: raw.amountCents as number,
+    amountCents,
     currency: raw.currency,
     previewMode: raw.previewMode,
     // Seller-controlled post-purchase actions — default deny (view-only).

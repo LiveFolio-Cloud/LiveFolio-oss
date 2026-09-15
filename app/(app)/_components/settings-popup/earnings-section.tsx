@@ -3,12 +3,13 @@
 /**
  * Settings popup — Earnings section (Cloud). Stripe Connect lifecycle for
  * creators: connect → hosted onboarding → status pill → dashboard link,
- * plus the sales summary (gross / 10% fee / net + recent sales). Follows the
- * flat SectionShell language of the other settings sections.
+ * plus the sales summary (gross / platform fee / Stripe processing / net +
+ * recent sales). Follows the flat SectionShell language of the other settings
+ * sections.
  */
 import { AlertCircle, ExternalLink, Loader2, Wallet } from 'lucide-react';
 import { SectionShell } from './section-shell';
-import { useStripeConnect } from './use-stripe-connect';
+import { useStripeConnect, type ConnectSaleRow } from './use-stripe-connect';
 import { cn } from '@/lib/utils';
 
 const CURRENCY_SYMBOL: Record<string, string> = { usd: '$', eur: '€', gbp: '£' };
@@ -21,6 +22,22 @@ function money(cents: number, currency = 'usd'): string {
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * The rate to show next to the platform fee — derived from the sales actually
+ * recorded rather than the current env constant, so it never contradicts the
+ * numbers beside it. Returns null when sales used differing rates, which the
+ * caller renders as no label at all rather than an averaged lie.
+ */
+function feeRateLabel(rows: ConnectSaleRow[]): string | null {
+  const rates = new Set(
+    rows.filter((r) => r.status !== 'refunded' && r.platformFeeBps != null).map((r) => r.platformFeeBps)
+  );
+  if (rates.size !== 1) return null;
+  const [bps] = Array.from(rates);
+  if (bps == null) return null;
+  return `${bps / 100}%`;
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -139,26 +156,50 @@ export function EarningsSection() {
                 {loading ? 'Opening…' : 'Open Stripe dashboard'}
               </button>
 
-              {/* Sales summary */}
+              {/* Sales summary. Broken out rather than a single "Net": the old
+                  figure deducted only LiveFolio's fee, so it read as take-home
+                  while quietly ignoring Stripe's processing cost. */}
               {sales ? (
                 <div className="space-y-2.5">
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { label: 'Gross', value: money(sales.totalGrossCents) },
-                      { label: 'Fees', value: `-${money(sales.totalFeesCents)}` },
-                      { label: 'Net', value: money(sales.totalNetCents) },
-                    ].map(({ label, value }) => (
-                      <div
-                        key={label}
-                        className="rounded-lg bg-black/[0.03] px-2.5 py-2 dark:bg-white/5"
-                      >
-                        <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">
-                          {label}
-                        </span>
-                        <span className="block text-sm font-semibold text-ink tabular-nums">{value}</span>
-                      </div>
-                    ))}
+                  <div className="space-y-1.5 rounded-lg bg-black/[0.03] px-3 py-2.5 dark:bg-white/5">
+                    <div className="flex items-center justify-between text-[13px]">
+                      <span className="text-ink/60">Gross</span>
+                      <span className="font-medium text-ink tabular-nums">
+                        {money(sales.totalGrossCents)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[13px]">
+                      <span className="text-ink/60">
+                        Platform fee
+                        {feeRateLabel(sales.sales) ? ` (${feeRateLabel(sales.sales)})` : ''}
+                      </span>
+                      <span className="font-medium text-ink tabular-nums">
+                        −{money(sales.totalFeesCents)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[13px]">
+                      <span className="text-ink/60">Stripe processing</span>
+                      <span className="font-medium text-ink tabular-nums">
+                        {sales.stripeFeeMissing && sales.totalStripeFeesCents === 0
+                          ? '—'
+                          : `−${money(sales.totalStripeFeesCents)}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-[#0F0F0D]/10 pt-1.5 text-[13px] dark:border-[#F4F4F0]/10">
+                      <span className="font-medium text-ink">Your net</span>
+                      <span className="font-semibold text-ink tabular-nums">
+                        {money(sales.totalNetCents)}
+                      </span>
+                    </div>
                   </div>
+
+                  {sales.stripeFeeMissing && (
+                    <p className="text-[11px] leading-relaxed text-ink/45">
+                      Card processing is paid by LiveFolio, not deducted from your
+                      net — so &quot;Your net&quot; is what you receive. The Stripe row
+                      shows — for sales where that cost wasn&apos;t recorded.
+                    </p>
+                  )}
 
                   {sales.sales.length > 0 && (
                     <div className="space-y-1.5">
