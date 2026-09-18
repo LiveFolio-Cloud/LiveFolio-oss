@@ -5,8 +5,8 @@
  * the per-folio zustand store (`createFolioStore`, persisted under
  * `LiveFolio_app_<folioId>` / `LiveFolio_app_view.<folioId>`) and shares it
  * with every tab view via React context. Mount once per folio — the tab bar,
- * the keep-alive Studio/Chat views (P2-T00/P2-T01), and the proposal overlay
- * all read/write the SAME store, which is how Chat keeps Studio's proposal
+ * the keep-alive Editor/Chat views (P2-T00/P2-T01), and the proposal overlay
+ * all read/write the SAME store, which is how Chat keeps the editor's proposal
  * state and `project` in sync across keep-alive tabs.
  *
  * The provider auto-fetches the folio on mount (`fetchProject` → GET

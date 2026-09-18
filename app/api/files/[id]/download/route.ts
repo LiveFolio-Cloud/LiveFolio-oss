@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
  *
  * Allowed only when the viewer holds an ACTIVE grant AND the gate's
  * allowDownload flag is on (seller-controlled; default off). Owner/members
- * bypass (they already export from the studio). Enforcement is server-side —
+ * bypass (they already export from the editor). Enforcement is server-side —
  * the button hiding client-side is cosmetic only.
  */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -54,6 +54,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       .eq('user_id', userId)
       .limit(1);
     const isMember = !!(membership && membership.length > 0);
+
+    // Archived folios stop being distributable to buyers and guests. Members
+    // keep access — they still own the content and may need to recover it.
+    if (!isMember && folio.archivedAt) {
+      return NextResponse.json({ error: 'This folio is no longer available.' }, { status: 404 });
+    }
 
     if (!isMember) {
       // Buyer path: active grant + allowDownload on the effective gate.

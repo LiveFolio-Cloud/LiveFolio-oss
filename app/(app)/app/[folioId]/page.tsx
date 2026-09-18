@@ -1,9 +1,9 @@
 /**
  * `/app/[folioId]` — a folio is selected. Renders the tab container
  * (P1-T02) inside the AppShellFrame center slot: per-folio provider +
- * role="tablist" bar + keep-alive Studio/Chat panels (placeholders until
+ * role="tablist" bar + keep-alive Editor/Chat panels (placeholders until
  * P2-T00/P2-T01). The provider fetches `/api/files/[id]` on mount.
- * force-dynamic mirrors the studio route's rendering mode (the fetch happens
+ * force-dynamic mirrors the folio route's rendering mode (the fetch happens
  * client-side through the provider).
  */
 import { FolioTabs } from '../../_components/tabs/FolioTabs';

@@ -1,13 +1,13 @@
 import { ToolDefinition } from '../provider.interface';
 
 /**
- * In-studio tool schemas for AI chat tool-use (Epic #96).
+ * Editor tool schemas for AI chat tool-use (Epic #96).
  *
  * These are distinct from the MCP tools at app/api/mcp/route.ts (which serve
  * external AI agents) but intentionally aligned in shape.  The AI selects and
- * invokes these tools based on user prompts in the studio chat panel.
+ * invokes these tools based on user prompts in the editor chat panel.
  */
-export const STUDIO_TOOLS: ToolDefinition[] = [
+export const EDITOR_TOOLS: ToolDefinition[] = [
   // ── 1. EDIT ELEMENT ──────────────────────────────────────────────
   {
     name: 'edit_element',
@@ -191,10 +191,10 @@ export const STUDIO_TOOLS: ToolDefinition[] = [
 
 /** Lookup a tool definition by name */
 export function getToolByName(name: string): ToolDefinition | undefined {
-  return STUDIO_TOOLS.find((t) => t.name === name);
+  return EDITOR_TOOLS.find((t) => t.name === name);
 }
 
 /** Check if a tool name is registered */
 export function isKnownTool(name: string): boolean {
-  return STUDIO_TOOLS.some((t) => t.name === name);
+  return EDITOR_TOOLS.some((t) => t.name === name);
 }

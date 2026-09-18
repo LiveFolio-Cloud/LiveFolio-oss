@@ -15,7 +15,7 @@
  *
  * Title placement: desktop shows the editable title next to the icons; on
  * phones the title lives INSIDE the tab row (TabBar renders <FolioTitle/>
- * after the Studio/Chat tabs with a divider) so the top bar is icons-only
+ * after the Editor/Chat tabs with a divider) so the top bar is icons-only
  * and the filename is never squeezed.
  *
  * Phone menus portal to <body> (HeaderMenuSurface) so no overflow-hidden
@@ -32,6 +32,7 @@ import { useFolioStore } from '../folio-provider/FolioProvider';
 import { useLayoutStore } from '@/lib/app-shell/layout-store';
 import { useTunnel } from '@/lib/app-shell/use-tunnel';
 import { isOSS } from '@/lib/env';
+import { SHELL_VIEWS } from '@/lib/app-shell/views';
 
 type MenuName = 'share' | 'featured' | 'access' | 'listing' | 'export' | 'tunnel';
 
@@ -47,8 +48,58 @@ const MENU_TITLES: Record<MenuName, string> = {
 /**
  * Editable folio title — pencil → inline rename. Shared by the desktop
  * header (title next to the icons) and, on phones, the tab row slot
- * (TabBar renders it after Studio/Chat with a divider).
+ * (TabBar renders it after Editor/Chat with a divider).
  */
+/**
+ * The Editor / Chat view switcher.
+ *
+ * Rendered in two places from this one component so the tablist semantics
+ * (`role="tab"` + `aria-controls`) stay in a single spot: inline at the START
+ * of the desktop header, and inside the phone tab row.
+ *
+ * Styled as a segmented control rather than the underline it used to be —
+ * the underline relied on sitting in a full-width bar with a bottom border
+ * to align against, which the header row does not have.
+ */
+export function ViewTabs({ className }: { className?: string }) {
+  const view = useFolioStore((s) => s.view);
+  const setView = useFolioStore((s) => s.setView);
+  return (
+    <div
+      role="tablist"
+      aria-label="Folio views"
+      className={cn(
+        'flex shrink-0 items-center gap-0.5 rounded-lg bg-[#0F0F0D]/5 p-0.5 dark:bg-[#F4F4F0]/10',
+        className,
+      )}
+    >
+      {SHELL_VIEWS.map((tab) => {
+        const active = tab.id === view;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            id={`app-tab-${tab.id}`}
+            aria-selected={active}
+            aria-controls={`app-panel-${tab.id}`}
+            tabIndex={active ? 0 : -1}
+            onClick={() => setView(tab.id)}
+            className={cn(
+              'flex cursor-pointer items-center rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+              active
+                ? 'bg-bone text-ink shadow-sm'
+                : 'text-ink/55 hover:text-ink',
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function FolioTitle({ className }: { className?: string }) {
   const project = useFolioStore((s) => s.project);
   const fetchProject = useFolioStore((s) => s.fetchProject);
@@ -56,6 +107,7 @@ export function FolioTitle({ className }: { className?: string }) {
   const [renameValue, setRenameValue] = useState('');
   const [savingRename, setSavingRename] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     if (renaming) {
@@ -63,6 +115,25 @@ export function FolioTitle({ className }: { className?: string }) {
       renameInputRef.current?.select();
     }
   }, [renaming]);
+
+  /** Honour the OS motion preference — an instant jump instead of a glide. */
+  const titleScrollBehavior = (): ScrollBehavior =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth';
+
+  const revealTitle = () => {
+    const el = titleRef.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    el.scrollTo({ left: el.scrollWidth, behavior: titleScrollBehavior() });
+  };
+
+  const resetTitle = () => {
+    const el = titleRef.current;
+    if (!el) return;
+    el.scrollTo({ left: 0, behavior: titleScrollBehavior() });
+  };
 
   if (!project) return null;
 
@@ -124,7 +195,19 @@ export function FolioTitle({ className }: { className?: string }) {
           >
             <Pencil size={12} />
           </button>
-          <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-ink">
+          {/* Reveal-on-hover: a long title is clipped to whatever fits, and
+              slides to expose its tail when you point at it (or press it, on
+              touch, where there is no hover). Only moves when the text
+              actually overflows, so short titles stay perfectly still. */}
+          <h1
+            ref={titleRef}
+            onMouseEnter={revealTitle}
+            onMouseLeave={resetTitle}
+            onTouchStart={revealTitle}
+            onTouchEnd={resetTitle}
+            title={project.title}
+            className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-sm font-semibold tracking-tight text-ink [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
             {project.title}
           </h1>
         </>
@@ -356,7 +439,9 @@ export function FolioHeader() {
   }
 
   return (
-    <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[#0F0F0D]/10 dark:border-[#F4F4F0]/10 bg-bone px-4">
+    <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[#0F0F0D]/10 dark:border-[#F4F4F0]/10 bg-bone px-4">
+      {/* Switcher leads, then the title — no more separate tab row. */}
+      <ViewTabs />
       <FolioTitle className="flex-1" />
       <div className="flex shrink-0 items-center gap-0.5">{rightCluster}</div>
     </div>

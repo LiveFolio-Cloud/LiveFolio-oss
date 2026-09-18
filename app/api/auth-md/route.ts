@@ -331,7 +331,7 @@ export async function GET() {
         {
           name: 'list_projects',
           description: 'List all folios the agent has access to',
-          arguments: {},
+          arguments: { include_archived: 'boolean (default false — archived folios are hidden)' },
         },
         {
           name: 'get_project',
@@ -404,6 +404,16 @@ export async function GET() {
           arguments: { project_id: 'string (required)', status: "enum: 'draft' | 'published'", isPrivate: 'boolean', accessKey: 'string', allowComments: 'boolean', presentationModeOnly: 'boolean' },
         },
         {
+          name: 'archive_folio',
+          description: 'Archive a folio: unpublished, unlisted, and hidden from every public surface. Nothing is deleted and it still counts toward storage. Idempotent',
+          arguments: { project_id: 'string (required)' },
+        },
+        {
+          name: 'unarchive_folio',
+          description: 'Restore an archived folio. Comes back as a DRAFT and unlisted — never republishes automatically',
+          arguments: { project_id: 'string (required)' },
+        },
+        {
           name: 'manage_paid_access',
           description: 'Read/change the paid-access gate (price/preview/allowCopy) — cloud only',
           arguments: { project_id: 'string (required)', paid_access: 'object (omit to read, null to clear)' },
@@ -436,12 +446,12 @@ export async function GET() {
         {
           name: 'list_workspaces',
           description: 'List workspace folders that organize folios — cloud only',
-          arguments: {},
+          arguments: { include_archived: 'boolean (default false — archived workspaces are hidden)' },
         },
         {
           name: 'manage_workspace',
-          description: 'Manage workspace folders — cloud only',
-          arguments: { action: "enum: 'create' | 'update' | 'delete' | 'add_folio'", project_id: 'string', name: 'string', description: 'string', is_public: 'boolean', folio_id: 'string', confirmed: 'boolean' },
+          description: 'Manage workspace folders — cloud only. archive hides the folder and unpublishes/unlists every folio inside it; unarchive restores them as drafts',
+          arguments: { action: "enum: 'create' | 'update' | 'delete' | 'add_folio' | 'archive' | 'unarchive'", project_id: 'string', name: 'string', description: 'string', is_public: 'boolean', folio_id: 'string', confirmed: 'boolean' },
         },
         {
           name: 'manage_member',

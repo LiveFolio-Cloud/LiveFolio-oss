@@ -7,7 +7,7 @@
  * sources): folio creation via `POST /api/files/ai-create`, template mode
  * chips, design drawer, auto-create toggle, staged-file attachments, and the
  * dash persona. After a successful creation the hero navigates to
- * `/app/<newId>` (the shell's folio route — Studio tab).
+ * `/app/<newId>` (the shell's folio route — Editor tab).
  *
  * Works in both modes. Cloud uses managed models resolved server-side; OSS
  * uses the visitor's own key (BYOK), sent with the request — the route has
@@ -36,14 +36,14 @@ import {
   MODE_LABELS,
 } from '@/lib/create-folio-state';
 
-const DesignDrawer = dynamic(() => import('@/components/studio/DesignDrawer'), { ssr: false });
+const DesignDrawer = dynamic(() => import('@/components/folio/DesignDrawer'), { ssr: false });
 
 interface ChatMessage {
   sender: 'user' | 'assistant';
   text: string;
 }
 
-// Quick Actions — same two as studio ChatPanel / DashboardChat
+// Quick Actions — same two as the folio ChatPanel / DashboardChat
 const DASH_QUICK_ACTIONS = [
   { label: 'Apply Design System', prompt: 'Generate a folio using the current design system preferences (theme, typography, palette, libraries).' },
   { label: 'Audit UI', prompt: 'Generate a folio with a UI audit checklist — spacing, border radius, responsiveness, and color consistency. Reply with findings first, do not generate code yet.' },
@@ -368,7 +368,7 @@ export function ChatHero() {
       });
       if (res.ok) {
         const data = await res.json();
-        // The shell's folio route — lands on the Studio tab of the new folio.
+        // The shell's folio route — lands on the Editor tab of the new folio.
         window.location.href = `/app/${data.project.id}`;
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -820,7 +820,7 @@ export function ChatHero() {
 }
 
 /** Labeled row for the composer's tools menu (Apple-style, borderless).
- *  Same component as FolioChatPanel / studio ChatPanel — one menu everywhere. */
+ *  Same component as FolioChatPanel / folio ChatPanel — one menu everywhere. */
 function ToolsMenuRow({
   icon: Icon,
   label,

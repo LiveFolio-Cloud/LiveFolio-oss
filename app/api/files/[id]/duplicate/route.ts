@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
  * POST /api/files/[id]/duplicate — a buyer copies a paid folio into their
  * own account. Allowed only with an ACTIVE grant AND the gate's allowCopy
  * flag (seller-controlled, default off). Owner/members bypass (they create
- * freely in the studio).
+ * freely in the editor).
  *
  * Copies every version verbatim plus the content-addressed storage objects
  * (asset:// pointers) from the seller's bucket path into the buyer's org

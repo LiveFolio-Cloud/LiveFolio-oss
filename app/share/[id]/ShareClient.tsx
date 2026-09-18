@@ -269,7 +269,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
   // ── Pin bridge sync ───────────────────────────────────────────────────
   // Push pins + accent into the folio once the in-iframe bridge reports
   // ready (and again whenever comments/page change). Numbers use the stable
-  // index in the FULL comments array, matching the Studio.
+  // index in the FULL comments array, matching the editor.
   useEffect(() => {
     if (!bridgeReady) return;
     const guestWindow = iframeRef.current?.contentWindow;
@@ -678,7 +678,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
     : null;
 
   // ── Radial controls dial (share) — the SAME element on /share/[id] and
-  //    /@username/<slug> (this component serves both). Unlike the Studio
+  //    /@username/<slug> (this component serves both). Unlike the editor
   //    dial it is visible on desktop AND mobile — guest pages have no other
   //    chrome of their own. Fan (thumb-closest first → far): React · Pages ·
   //    Discuss · Pin. Reactions collapse into ONE wedge that drills into the
@@ -699,7 +699,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
       { id: 'discuss', label: 'Discuss', title: 'Open the discussion', icon: MessageCircle, badge: openDiscussionCount || undefined, slot: 2 }
     );
     mainFanItems.push(
-      // Labeled "Comment" (same as the Studio tool): one toggle drops an
+      // Labeled "Comment" (same as the editor tool): one toggle drops an
       // anchored note — the folio marker + optional text. Pure spatial pins
       // vs. the free-form Discussion thread stay clearly separated.
       { id: 'pin', label: 'Comment', title: 'Comment — click anywhere in the folio to leave a note', icon: MapPin, active: isAnnotationMode, slot: 3 }

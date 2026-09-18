@@ -3,7 +3,7 @@
 /**
  * RadialDial — a round trigger whose tap fans a grid of action wedges around
  * it (AnyDesk-style), replacing the old "⋯ → list popover" FAB. Used by the
- * Studio canvas tools (Comment / Edit / Fix with AI) and by the public
+ * Editor canvas tools (Comment / Edit / Fix with AI) and by the public
  * share/@user viewer (react picker, page browsing, pin, discuss).
  *
  * Behavior shared by every consumer:
@@ -183,7 +183,7 @@ export function RadialDial({
                     // scope, where text-ink silently no-ops and the glyphs
                     // would inherit the page's hardcoded black — invisible
                     // on the dark: bubble. With explicit dark: pairs every
-                    // surface (studio + share) reads correctly.
+                    // surface (editor + share) reads correctly.
                     'bg-white/95 dark:bg-[#171714]/95 text-[#0F0F0D]/80 dark:text-[#F4F4F0]/80 ring-black/10 dark:ring-white/10 group-hover:text-[var(--app-accent)]'
               )}
               style={{ width: slot.size, height: slot.size }}

@@ -10,7 +10,7 @@ import { isOSS, isCloud } from '@/lib/env';
 import { resolveManagedModel } from '@/lib/ai/resolve-managed-model';
 import { supabaseAdmin, transformFolioRecord, FolioRecord } from '@/lib/supabase';
 import { projectMemoryCache } from '@/lib/project-cache';
-import { STUDIO_TOOLS } from '@/lib/ai/tools/folio-tools';
+import { EDITOR_TOOLS } from '@/lib/ai/tools/folio-tools';
 import { generateWithToolFallback } from '@/lib/ai/tool-fallback';
 import { compressChatHistory, pruneFileContext, estimateTokens } from '@/lib/ai/context-compressor';
 import { nextVersionId as nextFolioVersionId, applyVersionRetention } from '@/lib/version-retention';
@@ -761,7 +761,7 @@ ${customGuidelinesText}
       parsedResult = await generateWithToolFallback(
         userPrompt,
         contextObj,
-        STUDIO_TOOLS,
+        EDITOR_TOOLS,
         effectiveModel,
         undefined
       );

@@ -3,8 +3,8 @@
 /**
  * Keep-alive tab container (spike §2 — the locked decision): renders EVERY
  * registered view, all of them MOUNTED; the inactive ones are hidden with CSS
- * `display: none` on the wrapper. This is what keeps the StudioView iframe
- * (`#studio-sandbox-iframe`, P2-T00) alive across tab switches — its browsing
+ * `display: none` on the wrapper. This is what keeps the FolioView iframe
+ * (`#folio-sandbox-iframe`, P2-T00) alive across tab switches — its browsing
  * context, loaded HTML, running JS and scroll position survive because the
  * element is never removed from the DOM.
  *
@@ -15,11 +15,11 @@
  * removes it from AT).
  *
  * View → component mapping lives here; P2-T00 and P2-T01 replace the
- * placeholder branches with StudioView / ChatView.
+ * placeholder branches with FolioView / ChatView.
  */
 import { SHELL_VIEWS } from '@/lib/app-shell/views';
 import { useFolioStore } from '../folio-provider/FolioProvider';
-import { StudioView } from '../studio-view/StudioView';
+import { FolioView } from '../folio-view/FolioView';
 import { ChatView } from '../chat-view/ChatView';
 
 export function KeepAliveTabs() {
@@ -51,10 +51,10 @@ export function KeepAliveTabs() {
 
 function TabPanelView({ viewId }: { viewId: string }) {
   switch (viewId) {
-    case 'studio':
-      // P2-T00: StudioView — fork of StudioClient (canvas + keep-alive iframe),
-      // chat/AI lobe lives in the provider store (see studio-view/StudioView.tsx).
-      return <StudioView />;
+    case 'editor':
+      // P2-T00: FolioView — fork of the legacy editor (canvas + keep-alive iframe),
+      // chat/AI lobe lives in the provider store (see folio-view/FolioView.tsx).
+      return <FolioView />;
     case 'chat':
       // P2-T01: the unified ChatView — folio mode (editing chat), wired to
       // the per-folio provider store (sendPrompt/clearChat/commitProposal,

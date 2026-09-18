@@ -27,7 +27,7 @@ export const SELLER_TERMS_VERSION = '2026-09-03';
 
 /**
  * Strict validation for listing metadata coming from ANY write surface
- * (MCP, REST files API, ai-create, Slack/Discord, studio Share menu).
+ * (MCP, REST files API, ai-create, Slack/Discord, editor Share menu).
  * Rejects instead of clamping — invalid metadata should fail loudly at
  * write time, never silently change what a buyer sees.
  */

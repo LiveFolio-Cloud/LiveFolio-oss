@@ -22,7 +22,7 @@ const PHASES: { phase: ImportPhase; label: string; sub: string }[] = [
   { phase: 'reading', label: 'Reading your files', sub: 'Scanning every page and asset in your project…' },
   { phase: 'transforming', label: 'Transforming images', sub: 'Converting embedded assets into optimized bundles…' },
   { phase: 'saving', label: 'Baking into a folio', sub: 'Compiling everything into a LiveFolio workspace…' },
-  { phase: 'finalizing', label: 'Almost ready', sub: 'Wrapping up — your studio opens in a moment…' },
+  { phase: 'finalizing', label: 'Almost ready', sub: 'Wrapping up — your editor opens in a moment…' },
 ];
 
 const DISPLAY_FONT = '"Cabinet Grotesk", "Space Grotesk", sans-serif';

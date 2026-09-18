@@ -10,8 +10,8 @@ import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { Button } from '@/components/ui/button';
 import { Dropdown } from '@/components/ui/dropdown';
 import { Card } from '@/components/ui/card';
-import ChatMessageRenderer from '@/components/studio/ChatMessageRenderer';
-import ToolCallCard from '@/components/studio/ToolCallCard';
+import ChatMessageRenderer from '@/components/folio/ChatMessageRenderer';
+import ToolCallCard from '@/components/folio/ToolCallCard';
 import { HTMLFile, HTMLVersion } from '@/lib/db';
 import { isCloud } from '@/lib/env';
 

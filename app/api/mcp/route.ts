@@ -18,6 +18,7 @@ import type { ListingMetadata } from '@/lib/listing/types';
 import { deleteFolioAssets } from '@/lib/asset-store';
 import { hasActiveGrant, claimPendingGrants } from '@/lib/gating/grants';
 import { createGateCheckoutSession } from '@/lib/gating/checkout';
+import { archiveFolio, unarchiveFolio, archiveWorkspace, unarchiveWorkspace } from '@/lib/archive';
 import { createSellerOnboardingLink } from '@/lib/gating/seller';
 import { sendOrgInviteEmail } from '@/lib/email';
 import { projectMemoryCache } from '@/lib/project-cache';
@@ -375,11 +376,11 @@ export async function POST(request: Request) {
           },
           instructions: [
             "WHAT YOU CAN DO — capability map (a 'project' IS a folio):",
-            "FOLIOS: list_projects · get_project (includes visibility + analytics) · create_project (html/mode/design) · update_project (files/title/description — versioned) · delete_project (confirmed:true) · duplicate_project.",
+            "FOLIOS: list_projects (include_archived:true to see archived) · get_project (includes visibility + analytics) · create_project (html/mode/design) · update_project (files/title/description — versioned) · delete_project (confirmed:true) · duplicate_project · archive_folio / unarchive_folio (unarchive returns a DRAFT — never auto-republished; an archived folio is unpublished, unlisted, and hidden everywhere public, but still counts toward storage).",
             "FEEDBACK: get_curated_brief · get_active_design_system · add_comment (pins with x/y/selector) · moderate_comment (resolve|reopen|delete) · add_reaction (👍 ❤️ 💡 🔥).",
             "SHARING & MONEY: manage_sharing (publish/privacy/access key — no version bump) · manage_paid_access (price/preview) · manage_listing (Explore marketplace + license + eligibility).",
             "MARKETPLACE: search_marketplace (browse) · buy_project (returns a checkout URL — relay it to the user) · get_purchases (session_id → grant poll, else history) · manage_seller_account (Stripe Connect status|onboard URL relay).",
-            "WORKSPACE: list_workspaces · manage_workspace (create|update|delete|add_folio) · manage_member (no action = list; invite|update_role|remove).",
+            "WORKSPACE: list_workspaces (include_archived:true to see archived) · manage_workspace (create|update|delete|add_folio|archive|unarchive) · manage_member (no action = list; invite|update_role|remove).",
             "PROFILE & SOCIAL: manage_profile (no action = read) · claim_handle (no username = suggestions) · follow_profile · get_public_profile (discover a creator's catalog by @username).",
             "CONVENTIONS:",
             "- 'No args = read' applies to manage_listing, manage_sharing, manage_paid_access, manage_profile, manage_member, claim_handle, get_purchases.",
@@ -406,10 +407,12 @@ export async function POST(request: Request) {
       const tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [
         {
           name: "list_projects",
-          description: "List all existing LiveFolio projects/folios. Returns IDs, titles, descriptions, file counts, version counts, and open comment counts. Call this first to discover what projects exist before creating or updating.",
+          description: "List all existing LiveFolio projects/folios. Returns IDs, titles, descriptions, file counts, version counts, open comment counts, and an `archived` flag per folio. Archived folios are omitted by default — pass include_archived:true to see them too. Call this first to discover what projects exist before creating or updating.",
           inputSchema: {
             type: "object",
-            properties: {},
+            properties: {
+              include_archived: { type: "boolean", description: "Include archived folios in the results. Default false — archived folios are hidden." }
+            },
             required: []
           }
         },
@@ -592,6 +595,28 @@ export async function POST(request: Request) {
             },
             required: ["project_id"]
           }
+        },
+        {
+          name: "archive_folio",
+          description: "Archive a folio: it is unpublished and unlisted from Explore, and hidden from all public surfaces (share links, profile, workspace pages) — only the owner keeps access, in the Archived section. The folio is NOT deleted and still counts toward storage quota. Reversible with unarchive_folio, which returns it as a DRAFT (it never republishes itself). Idempotent.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              project_id: { type: "string", description: "The ID of the folio to archive" }
+            },
+            required: ["project_id"]
+          }
+        },
+        {
+          name: "unarchive_folio",
+          description: "Restore an archived folio. It comes back as a DRAFT and stays unlisted — nothing republishes automatically. Use manage_sharing with status:'published' afterwards if the owner wants it live again.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              project_id: { type: "string", description: "The ID of the folio to unarchive" }
+            },
+            required: ["project_id"]
+          }
         }
       );
 
@@ -753,16 +778,22 @@ export async function POST(request: Request) {
           },
           {
             name: "list_workspaces",
-            description: "List the workspace folders that organize folios, with id, name, slug, is_public, and folio_count. Use these IDs to organize folios via manage_workspace.",
-            inputSchema: { type: "object", properties: {}, required: [] }
-          },
-          {
-            name: "manage_workspace",
-            description: "Manage workspace folders that organize folios. action 'create': new folder (name, optional description, optional is_public). 'update': rename, description, or public visibility. 'delete': PERMANENTLY DELETE the folder — folios inside are detached, NOT deleted — requires confirmed:true. 'add_folio': move a folio into the folder.",
+            description: "List the workspace folders that organize folios, with id, name, slug, is_public, folio_count, and an `archived` flag. Archived workspaces are omitted by default — pass include_archived:true to see them too. Use these IDs to organize folios via manage_workspace.",
             inputSchema: {
               type: "object",
               properties: {
-                action: { type: "string", enum: ["create", "update", "delete", "add_folio"], description: "The workspace action" },
+                include_archived: { type: "boolean", description: "Include archived workspaces in the results. Default false — archived workspaces are hidden." }
+              },
+              required: []
+            }
+          },
+          {
+            name: "manage_workspace",
+            description: "Manage workspace folders that organize folios. action 'create': new folder (name, optional description, optional is_public). 'update': rename, description, or public visibility. 'delete': PERMANENTLY DELETE the folder — folios inside are detached, NOT deleted — requires confirmed:true. 'add_folio': move a folio into the folder. 'archive': hide the folder and unpublish/unlist EVERY folio inside it (nothing is deleted; archived folios still count toward storage). 'unarchive': restore the folder and its folios as DRAFTS — nothing republishes automatically.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                action: { type: "string", enum: ["create", "update", "delete", "add_folio", "archive", "unarchive"], description: "The workspace action" },
                 project_id: { type: "string", description: "The folder ID (update/delete/add_folio)" },
                 name: { type: "string", description: "Folder name (create required; update optional)" },
                 description: { type: "string", description: "Optional folder description (create/update)" },
@@ -938,7 +969,7 @@ async function handleToolCall(name: string, args: any, request?: Request) {
   try {
     switch (name) {
       case 'list_projects': {
-        const res = await handleListProjects();
+        const res = await handleListProjects(request, args);
         return {
           content: [{ type: 'text', text: JSON.stringify(res, null, 2) }]
         };
@@ -1015,6 +1046,14 @@ async function handleToolCall(name: string, args: any, request?: Request) {
         const res = await handleManageSharing(args);
         return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
       }
+      case 'archive_folio': {
+        const res = await handleArchiveFolio(args);
+        return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
+      }
+      case 'unarchive_folio': {
+        const res = await handleUnarchiveFolio(args);
+        return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
+      }
       case 'manage_paid_access': {
         const res = await handleManagePaidAccess(args);
         return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
@@ -1040,7 +1079,7 @@ async function handleToolCall(name: string, args: any, request?: Request) {
         return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
       }
       case 'list_workspaces': {
-        const res = await handleListWorkspaces();
+        const res = await handleListWorkspaces(args);
         return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
       }
       case 'manage_workspace': {
@@ -1109,24 +1148,29 @@ function getRequestOrigin(request?: Request): string {
   return `${protocol}://${host}`;
 }
 
-async function handleListProjects(request?: Request) {
+async function handleListProjects(request?: Request, args?: { include_archived?: boolean }) {
+  const includeArchived = args?.include_archived === true;
   let db: HTMLFile[] = [];
 
   if (!isOSS) {
     const orgId = await resolveOrgIdFromHeaders();
     if (!supabaseAdmin) throw new Error("Supabase is not initialized.");
 
-    const { data, error } = await supabaseAdmin
+    const query = supabaseAdmin
       .from('folios')
       .select('*')
       .eq('organization_id', orgId)
       .order('updated_at', { ascending: false });
+    // Archived folios are hidden unless explicitly asked for.
+    const { data, error } = await (includeArchived ? query : query.is('archived_at', null));
 
     if (error) throw error;
     db = (data as FolioRecord[]).map(transformFolioRecord);
   } else {
     db = await readDB();
   }
+
+  if (!includeArchived) db = db.filter((p) => !p.archivedAt);
 
   const origin = getRequestOrigin(request);
   const activeUrl = globalWithTunnel.activeUrl;
@@ -1140,6 +1184,8 @@ async function handleListProjects(request?: Request) {
       project_id: p.id,
       title: p.title,
       description: p.description,
+      status: p.status || 'draft',
+      archived: !!p.archivedAt,
       file_count: fileCount,
       version_count: p.versions.length,
       open_comments: openComments,
@@ -1282,6 +1328,22 @@ async function handleCreateProject(args: any, request?: Request) {
     listingMeta = sanitizeListing(listing);
     if (!listingMeta) {
       throw new Error('Invalid listing metadata: expected { listed: boolean, category?, tags?, creation?, license?: { kind, allowModify, allowResale, requireAttribution, maxProjects? }, rightsAttestedAt? } with values from the documented enums.');
+    }
+  }
+
+  // Creating straight into an archived workspace would hide the folio the
+  // instant it exists. Make the caller unarchive first.
+  if (project_id && !isOSS) {
+    if (!supabaseAdmin) throw new Error('Supabase is not initialized.');
+    const orgId = await resolveOrgIdFromHeaders();
+    const { data: workspace } = await supabaseAdmin
+      .from('projects')
+      .select('archived_at')
+      .eq('id', project_id)
+      .eq('organization_id', orgId)
+      .maybeSingle();
+    if (workspace?.archived_at) {
+      throw new Error('That workspace is archived. Unarchive it (manage_workspace action:"unarchive") before creating folios in it.');
     }
   }
 
@@ -1528,7 +1590,7 @@ async function handleUpdateProject(args: any, request?: Request) {
       .eq('organization_id', folioOrgId);
 
     if (updateError) throw updateError;
-    // Agent edits must be visible immediately — the raw/share/studio paths
+    // Agent edits must be visible immediately — the raw/share/editor paths
     // all read through this 10-minute in-memory project cache. Without this
     // invalidation, viewers kept serving the pre-update version.
     projectMemoryCache.invalidate(project_id);
@@ -2321,12 +2383,21 @@ async function handleManageSharing(args: any) {
 
     const { data: current, error: fetchError } = await supabaseAdmin
       .from('folios')
-      .select('id, is_private, access_key, allow_comments, presentation_mode_only, status')
+      .select('id, is_private, access_key, allow_comments, presentation_mode_only, status, archived_at')
       .eq('id', project_id)
       .eq('organization_id', orgId)
       .maybeSingle();
 
     if (fetchError || !current) throw new Error(`Project with ID '${project_id}' not found.`);
+
+    // An archived folio cannot be published in place — it has to come out of
+    // the archive first, landing as a draft. Without this the archive would be
+    // trivially bypassable by any agent that can call manage_sharing.
+    if (status === 'published' && current.archived_at) {
+      throw new Error(
+        `Folio '${project_id}' is archived. Call unarchive_folio first — it returns as a draft — then publish.`
+      );
+    }
 
     if (!hasChanges) {
       return {
@@ -2335,6 +2406,7 @@ async function handleManageSharing(args: any) {
         hasAccessKey: !!current.access_key,
         allowComments: current.allow_comments ?? true,
         presentationModeOnly: current.presentation_mode_only ?? false,
+        archived: !!current.archived_at,
       };
     }
 
@@ -2378,6 +2450,7 @@ async function handleManageSharing(args: any) {
       hasAccessKey: !!project.accessKey,
       allowComments: project.allowComments ?? true,
       presentationModeOnly: project.presentationModeOnly ?? false,
+      archived: !!project.archivedAt,
     };
   }
 
@@ -2385,6 +2458,12 @@ async function handleManageSharing(args: any) {
     const idx = db.findIndex((p) => p.id === project_id);
     if (idx === -1) throw new Error(`Project with ID '${project_id}' not found.`);
     const project = db[idx];
+    // Same archive backstop as the cloud path.
+    if (status === 'published' && project.archivedAt) {
+      throw new Error(
+        `Folio '${project_id}' is archived. Call unarchive_folio first — it returns as a draft — then publish.`
+      );
+    }
     if (status !== undefined) project.status = status === 'published' ? 'published' : 'draft';
     if (isPrivate !== undefined) project.isPrivate = !!isPrivate;
     if (accessKey !== undefined) project.accessKey = accessKey || undefined;
@@ -2401,6 +2480,49 @@ async function handleManageSharing(args: any) {
     };
   });
   return { success: true, ...result };
+}
+
+/**
+ * Archive a folio. Dual-mode. The invariant (unpublish + unlist + stamp) lives
+ * in lib/archive.ts so this and the REST route can never drift.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool arguments are unvalidated JSON-RPC params whose shape is dynamic by design
+async function handleArchiveFolio(args: any) {
+  const { project_id } = args || {};
+  if (!project_id) throw new Error("Argument 'project_id' is required.");
+
+  const orgId = isOSS ? undefined : await resolveOrgIdFromHeaders();
+  const state = await archiveFolio(project_id, orgId);
+  if (!state) throw new Error(`Project with ID '${project_id}' not found.`);
+
+  return {
+    success: true,
+    project_id: state.id,
+    status: state.status,
+    archived: true,
+    archived_at: state.archivedAt,
+    note: 'Archived — unpublished, unlisted, and hidden from every public surface. Nothing was deleted and it still counts toward storage. Restore with unarchive_folio.',
+  };
+}
+
+/** Restore an archived folio. Dual-mode. Comes back as a DRAFT, never published. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool arguments are unvalidated JSON-RPC params whose shape is dynamic by design
+async function handleUnarchiveFolio(args: any) {
+  const { project_id } = args || {};
+  if (!project_id) throw new Error("Argument 'project_id' is required.");
+
+  const orgId = isOSS ? undefined : await resolveOrgIdFromHeaders();
+  const state = await unarchiveFolio(project_id, orgId);
+  if (!state) throw new Error(`Project with ID '${project_id}' not found.`);
+
+  return {
+    success: true,
+    project_id: state.id,
+    status: state.status,
+    archived: false,
+    archived_at: null,
+    note: 'Restored as a draft. It is still unpublished and unlisted — call manage_sharing with status:"published" when the owner wants it live again.',
+  };
 }
 
 /** Read or change a folio's paid-access gate (cloud-only). */
@@ -2565,6 +2687,9 @@ async function handleSearchMarketplace(args: any) {
     .eq('is_private', false)
     .eq('moderation_status', 'ok')
     .eq('listed', true)
+    // Belt and braces: archived folios are drafts and unlisted already, so
+    // the filters above exclude them — this survives a partially-applied write.
+    .is('archived_at', null)
     .order('updated_at', { ascending: false })
     .range(pageOffset, pageOffset + pageSize - 1);
 
@@ -2666,6 +2791,19 @@ async function handleBuyProject(args: any) {
   if (!project_id) throw new Error("Argument 'project_id' is required.");
   const orgId = await resolveOrgIdFromHeaders();
   const userId = await resolveActingUserId(orgId);
+
+  // An archived folio is off the market — never open a checkout for one. The
+  // gate config may still be present, so this cannot be left to the lib.
+  if (supabaseAdmin) {
+    const { data: folioRow } = await supabaseAdmin
+      .from('folios')
+      .select('archived_at')
+      .eq('id', project_id)
+      .maybeSingle();
+    if (folioRow?.archived_at) {
+      throw new Error('This folio is archived and is no longer for sale.');
+    }
+  }
 
   const result = await createGateCheckoutSession({
     userId,
@@ -2910,16 +3048,20 @@ async function handleManageSellerAccount(args: any) {
 // ── Phase 3: workspace folders / members / profile / social ────────────
 
 /** List workspace folders (cloud-only — renamed from list_folio_projects). */
-async function handleListWorkspaces() {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool arguments are unvalidated JSON-RPC params whose shape is dynamic by design
+async function handleListWorkspaces(args?: any) {
   if (isOSS) throw new Error('Workspace folders are a cloud feature and are not available in OSS mode.');
+  const includeArchived = args?.include_archived === true;
   const orgId = await resolveOrgIdFromHeaders();
   if (!supabaseAdmin) throw new Error('Supabase is not initialized.');
 
-  const { data: projects, error } = await supabaseAdmin
+  const base = supabaseAdmin
     .from('projects')
-    .select('id, name, slug, description, is_public, organization_id, created_at, updated_at')
+    .select('id, name, slug, description, is_public, organization_id, created_at, updated_at, archived_at')
     .eq('organization_id', orgId)
     .order('created_at', { ascending: true });
+  // Archived workspaces are hidden unless explicitly asked for.
+  const { data: projects, error } = await (includeArchived ? base : base.is('archived_at', null));
 
   if (error) throw error;
 
@@ -2938,12 +3080,13 @@ async function handleListWorkspaces() {
   }
 
   return {
-    workspaces: (projects || []).map((p: { id: string; name: string | null; slug: string | null; description: string | null; is_public: boolean | null }) => ({
+    workspaces: (projects || []).map((p: { id: string; name: string | null; slug: string | null; description: string | null; is_public: boolean | null; archived_at?: string | null }) => ({
       project_id: p.id,
       name: p.name,
       slug: p.slug,
       description: p.description,
       is_public: p.is_public,
+      archived: !!p.archived_at,
       folio_count: counts.get(p.id) || 0,
     })),
     total: (projects || []).length,
@@ -2955,8 +3098,8 @@ async function handleListWorkspaces() {
 async function handleManageWorkspace(args: any) {
   if (isOSS) throw new Error('Workspace folders are a cloud feature and are not available in OSS mode.');
   const { action, project_id, name, description, is_public, folio_id, confirmed } = args || {};
-  if (!['create', 'update', 'delete', 'add_folio'].includes(action)) {
-    throw new Error("Argument 'action' must be one of: create, update, delete, add_folio.");
+  if (!['create', 'update', 'delete', 'add_folio', 'archive', 'unarchive'].includes(action)) {
+    throw new Error("Argument 'action' must be one of: create, update, delete, add_folio, archive, unarchive.");
   }
   const orgId = await resolveOrgIdFromHeaders();
   if (!supabaseAdmin) throw new Error('Supabase is not initialized.');
@@ -2980,7 +3123,35 @@ async function handleManageWorkspace(args: any) {
     return { success: true, workspace: data };
   }
 
-  if (!project_id) throw new Error("Argument 'project_id' is required for update/delete/add_folio.");
+  if (!project_id) throw new Error("Argument 'project_id' is required for update/delete/add_folio/archive/unarchive.");
+
+  // Archive sweeps every folio in the workspace through the same invariant as
+  // a folio archive — see lib/archive.ts.
+  if (action === 'archive') {
+    const state = await archiveWorkspace(project_id, orgId);
+    if (!state) throw new Error('Workspace folder not found or access denied.');
+    return {
+      success: true,
+      project_id: state.id,
+      archived: true,
+      archived_at: state.archivedAt,
+      archived_folios: state.affectedFolios,
+      note: 'Workspace archived — its folios are unpublished, unlisted, and hidden from every public surface. Nothing was deleted and they still count toward storage. Restore with action:"unarchive".',
+    };
+  }
+
+  if (action === 'unarchive') {
+    const state = await unarchiveWorkspace(project_id, orgId);
+    if (!state) throw new Error('Workspace folder not found or access denied.');
+    return {
+      success: true,
+      project_id: state.id,
+      archived: false,
+      archived_at: null,
+      restored_folios: state.affectedFolios,
+      note: 'Workspace and its folios restored as drafts. Nothing republished automatically — publish them again when the owner is ready.',
+    };
+  }
 
   if (action === 'update') {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -3413,7 +3584,9 @@ async function handleGetPublicProfile(args: any) {
       .from('projects')
       .select('id, name, slug, description, is_public')
       .eq('organization_id', orgId)
-      .eq('is_public', true);
+      .eq('is_public', true)
+      // A creator's public catalog never advertises an archived workspace.
+      .is('archived_at', null);
     if (projErr) throw projErr;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped Supabase project rows
     workspaces = (projectRows || []).map((p: any) => ({

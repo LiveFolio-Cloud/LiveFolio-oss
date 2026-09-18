@@ -1,36 +1,36 @@
 'use client';
 
 /**
- * StudioView — the app-shell Studio tab (P2-T00).
+ * FolioView — the app-shell Editor tab (P2-T00).
  *
- * FORK of `app/studio/[id]/StudioClient.tsx` (3873 lines), stripped per
- * `build-hubs/app-shell-v2/spikes/studio-canvas-extraction.md` §1.2. The old
- * file is NEVER modified; this fork is the shell's keep-alive Studio tab.
+ * The shell's editor tab — the canvas, mode views, and keep-alive sandbox
+ * the canvas-extraction spike §1.2. The old
+ * file is NEVER modified; this fork is the shell's keep-alive Editor tab.
  *
  * WHAT WAS STRIPPED (vs the source):
  * - The chat/AI lobe (state at 448–455, 550–556, 1249–1258 + `handleSendChatPrompt`,
  *   `executeToolCall`, `updateToolCallStatus`, tool handlers, `handleClearChat`,
  *   `handleCommitProposal`) — moved to the per-folio provider store
- *   (`lib/app-shell/folio-store.ts`, implemented by P2-T01; StudioView calls
+ *   (`lib/app-shell/folio-store.ts`, implemented by P2-T01; FolioView calls
  *   `sendPrompt` / `commitProposal` / `clearChat`).
  * - The floating chat modal (3348–3496) — replaced by the keep-alive Chat tab.
  * - The toolbar chat toggle (2793–2809) — now a `setView('chat')` switch.
  * - The body scroll lock (1285–1300) — the shell owns scrolling.
- * - The loading-screen gate (2717) — the provider fetches; StudioView renders a
+ * - The loading-screen gate (2717) — the provider fetches; FolioView renders a
  *   local loading screen until the provider's `project` is ready.
- * - `StudioHeader`'s back-to-dashboard breadcrumb — forked into
- *   `StudioViewHeader.tsx` with the breadcrumb/back-nav removed (share, tunnel,
+ * - the legacy editor header's back-to-dashboard breadcrumb — forked into
+ *   `FolioViewHeader.tsx` with the breadcrumb/back-nav removed (share, tunnel,
  *   export, rename, delete actions kept).
  * - Dead state (leftover from when the sidebar/chat were inline): sidebar
  *   resize state, `isSharingOpen`/`isProfileMenuOpen`/`copiedLocal`/`copiedPublic`
- *   (StudioHeader manages its own), `hoveredCommentId`, `selectedElementSelector`,
+ *   (the legacy header managed its own), `hoveredCommentId`, `selectedElementSelector`,
  *   `mobilePanel`, `isFloatingChatOpen`, chat scroll refs, `handlePinDrop`,
  *   `getPresetChips`, `relativeTime`.
  *
  * KEPT INTACT: the canvas toolbar, the preview iframe
- * (`id="studio-sandbox-iframe"`, src `/api/raw/{id}/{file}?v={versionId}`), the
+ * (`id="folio-sandbox-iframe"`, src `/api/raw/{id}/{file}?v={versionId}`), the
  * script-injection effect (619–1042) with pins/visual-edit/inspect bridges, the
- * mode tabs + mode views (imported from `components/studio/`), imports
+ * mode tabs + mode views (imported from `components/folio/`), imports
  * (ZIP/folder/direct), attachments, export, design system, CRUD dialogs.
  *
  * KEEP-ALIVE: mounted by `KeepAliveTabs` (P1-T02) — both tabs stay mounted, the
@@ -39,7 +39,7 @@
  *
  * VERSION-JUMP RE-DERIVATION: v1's `fetchProject(shouldJumpToLatest)` jumped the
  * preview to the newest version after saves/commits. The provider's
- * `fetchProject` has no jump parameter, so StudioView re-derives it: the
+ * `fetchProject` has no jump parameter, so FolioView re-derives it: the
  * save/restore/apply paths set a ref flag consumed by the [project] effect, and
  * an AI generation that lands a NEW version (auto-apply) jumps when
  * `isAiResponding` falls (proposal-only runs create no version and must not
@@ -87,36 +87,36 @@ import { Input } from '@/components/ui/input';
 import { Dialog, AlertDialog } from '@/components/ui/dialog';
 import { Dropdown } from '@/components/ui/dropdown';
 import { createBrowserClient, isSupabaseConfigured } from '@/lib/supabase';
-import CodeView from '@/components/studio/CodeView';
+import CodeView from '@/components/folio/CodeView';
 import type { ChatScope } from '@/lib/app-shell/folio-store';
 import { useFolioStore } from '../folio-provider/FolioProvider';
-import { STUDIO_TOOLS, getStudioTool } from '@/lib/app-shell/studio-tools';
-import type { StudioToolDef, StudioToolId } from '@/lib/app-shell/studio-tools';
+import { EDITOR_TOOLS, getEditorTool } from '@/lib/app-shell/folio-tools';
+import type { EditorToolDef, EditorToolId } from '@/lib/app-shell/folio-tools';
 import { summarizeEdits } from '@/lib/app-shell/edit-summary';
 import { RadialDial } from '@/components/ui/RadialDial';
 import type { RadialDialItem } from '@/components/ui/RadialDial';
 
 // Lazy-load panels, drawers, and modals — they only mount when the user engages.
 // ssr: false avoids React static-flag mismatches since these render conditionally.
-const PinsView = dynamic(() => import('@/components/studio/PinsView'), { ssr: false });
-const CommentsView = dynamic(() => import('@/components/studio/CommentsView'), { ssr: false });
-const HistoryView = dynamic(() => import('@/components/studio/HistoryView'), { ssr: false });
-const MapView = dynamic(() => import('@/components/studio/MapView'), { ssr: false });
-const AnalyticsView = dynamic(() => import('@/components/studio/AnalyticsView'), { ssr: false });
-const DesignDrawer = dynamic(() => import('@/components/studio/DesignDrawer'), { ssr: false });
-const CreateScreenModal = dynamic(() => import('@/components/studio/CreateScreenModal'), { ssr: false });
-const ImportRepoModal = dynamic(() => import('@/components/studio/ImportRepoModal'), { ssr: false });
-const AttachmentPortal = dynamic(() => import('@/components/studio/AttachmentPortal'), { ssr: false });
+const PinsView = dynamic(() => import('@/components/folio/PinsView'), { ssr: false });
+const CommentsView = dynamic(() => import('@/components/folio/CommentsView'), { ssr: false });
+const HistoryView = dynamic(() => import('@/components/folio/HistoryView'), { ssr: false });
+const MapView = dynamic(() => import('@/components/folio/MapView'), { ssr: false });
+const AnalyticsView = dynamic(() => import('@/components/folio/AnalyticsView'), { ssr: false });
+const DesignDrawer = dynamic(() => import('@/components/folio/DesignDrawer'), { ssr: false });
+const CreateScreenModal = dynamic(() => import('@/components/folio/CreateScreenModal'), { ssr: false });
+const ImportRepoModal = dynamic(() => import('@/components/folio/ImportRepoModal'), { ssr: false });
+const AttachmentPortal = dynamic(() => import('@/components/folio/AttachmentPortal'), { ssr: false });
 
 // Minimal structural types for the CDN-injected JSZip / pdf.js globals —
-// only the API surface StudioView touches is declared.
-type StudioJsZipLib = {
+// only the API surface FolioView touches is declared.
+type JsZipLib = {
   loadAsync(file: Blob): Promise<{
     files: Record<string, { dir?: boolean; async(type: string): Promise<string> }>;
   }>;
 };
 
-type StudioPdfJsLib = {
+type PdfJsLib = {
   GlobalWorkerOptions: { workerSrc: string };
   getDocument(params: { data: ArrayBuffer }): {
     promise: Promise<{
@@ -128,7 +128,7 @@ type StudioPdfJsLib = {
   };
 };
 
-export function StudioView() {
+export function FolioView() {
   const router = useRouter();
 
   // ── Per-folio provider: server truth + shared chat/AI state (P1-T02/P2-T01)
@@ -149,7 +149,7 @@ export function StudioView() {
   const setDesignSystemPrefs = useFolioStore((s) => s.setDesignSystemPrefs);
   const activeFilename = useFolioStore((s) => s.activeFilename);
 
-  // ── Local loading chrome (v1 146–209) — the provider fetches; StudioView
+  // ── Local loading chrome (v1 146–209) — the provider fetches; FolioView
   //    keeps the brief branded intro so the shell doesn't flash.
   const [isLoading, setIsLoading] = useState(true);
   const [, setLoadingProgress] = useState(10);
@@ -175,7 +175,7 @@ export function StudioView() {
             }
           }
         } catch (e) {
-          console.error('Failed to load user info in Studio:', e);
+          console.error('Failed to load user info in the folio editor:', e);
         }
       }
     }
@@ -482,26 +482,26 @@ export function StudioView() {
   // ── Canvas tools (Comment / Edit / Fix with AI) — derived from the three
   //    legacy mode booleans so all existing call sites keep working; the
   //    desktop trio and the mobile dial both drive `activateTool`.
-  const activeToolId: StudioToolId | null = isAnnotationMode
+  const activeToolId: EditorToolId | null = isAnnotationMode
     ? 'comment'
     : isVisualEditMode
       ? 'edit'
       : isTargetInspectMode
         ? 'polish'
         : null;
-  const activeToolDef = getStudioTool(activeToolId);
+  const activeToolDef = getEditorTool(activeToolId);
 
   // Fan items in RadialDial slot order (near-inner · near-outer · far-inner ·
   // far-outer) → Edit · More · Comment · Fix with AI.
   const dialItems: RadialDialItem[] = [
-    { ...getStudioTool('edit')!, active: activeToolId === 'edit' },
+    { ...getEditorTool('edit')!, active: activeToolId === 'edit' },
     { id: 'more', label: 'More', title: 'More — screens, views, import', icon: LayoutGrid },
-    { ...getStudioTool('comment')!, active: activeToolId === 'comment' },
-    { ...getStudioTool('polish')!, active: activeToolId === 'polish' },
+    { ...getEditorTool('comment')!, active: activeToolId === 'comment' },
+    { ...getEditorTool('polish')!, active: activeToolId === 'polish' },
   ];
 
   /** Activate exactly one canvas tool; null exits all three. */
-  const activateTool = useCallback((tool: StudioToolId | null) => {
+  const activateTool = useCallback((tool: EditorToolId | null) => {
     setIsAnnotationMode(tool === 'comment');
     setIsVisualEditMode(tool === 'edit');
     setIsTargetInspectMode(tool === 'polish');
@@ -527,7 +527,7 @@ export function StudioView() {
       setIsMoreOpen(true);
       return;
     }
-    const tool = id as StudioToolId;
+    const tool = id as EditorToolId;
     activateTool(activeToolId === tool ? null : tool);
     closeDialAll();
   };
@@ -729,7 +729,7 @@ export function StudioView() {
     if (activeProposal) setCanvasMode('preview');
   }, [activeProposal]);
 
-  // v1 handleApplyProposal (StudioClient 1410–1415): apply the awaiting
+  // Apply the awaiting
   // proposal. The provider's commitProposal does the network + refetch; the
   // jump flag makes the [project] effect point the preview at the new version
   // (v1 fetchProject(true)).
@@ -743,14 +743,14 @@ export function StudioView() {
 
   // Inject Pin Script into iframe for robust anchoring and contentEditable support
   useEffect(() => {
-    const iframe = document.getElementById('studio-sandbox-iframe') as HTMLIFrameElement;
+    const iframe = document.getElementById('folio-sandbox-iframe') as HTMLIFrameElement;
     if (!iframe) return;
 
     const handleIframeLoad = () => {
        const doc = iframe.contentDocument || iframe.contentWindow?.document;
        if (!doc || !doc.head || !doc.body) return;
 
-       // Typed handle for Studio-injected lifecycle hooks stashed on the
+       // Typed handle for lifecycle hooks the sandbox injects, stashed on the
        // iframe document (script-globals that would otherwise need `any`).
        const docHooks = doc as Document & {
          __lfImageResilienceInjected?: boolean;
@@ -815,7 +815,7 @@ export function StudioView() {
           doc.body.style.outlineOffset = '-2px';
 
           let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-          // Helper to get clean HTML without injected Studio chrome
+          // Helper to get clean HTML without injected editor chrome
           const sendContentUpdate = () => {
              const clone = doc.documentElement.cloneNode(true) as HTMLElement;
              clone.querySelector('#livefolio-pins-layer')?.remove();
@@ -1358,7 +1358,7 @@ export function StudioView() {
     // Blank the iframe before the PUT.  Folios with many images trigger
     // dozens of concurrent /api/raw requests that saturate the DB pool.
     // Blanking cancels all of them so the PUT doesn't timeout.
-    const iframe = document.getElementById('studio-sandbox-iframe') as HTMLIFrameElement | null;
+    const iframe = document.getElementById('folio-sandbox-iframe') as HTMLIFrameElement | null;
     const previousSrc = iframe?.src || '';
     if (iframe) {
       iframe.src = 'about:blank';
@@ -1374,7 +1374,7 @@ export function StudioView() {
 
       const { files: leanFiles, extractedCount } = extractBase64Images(nextFilesMap);
       if (extractedCount > 0) {
-        console.log(`[Studio] Extracted ${extractedCount} base64 images before save`);
+        console.log(`[Folio] Extracted ${extractedCount} base64 images before save`);
       }
 
       // Split files into text (goes through PUT as JSON) and images
@@ -1438,7 +1438,7 @@ export function StudioView() {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `Batch upload failed (${res.status})`);
         }
-        console.log(`[Studio] Uploaded ${Object.keys(imageFiles).length} images`);
+        console.log(`[Folio] Uploaded ${Object.keys(imageFiles).length} images`);
       }
 
       // v1: fetchProject(true) — jump the preview to the new version. The
@@ -1697,8 +1697,8 @@ export function StudioView() {
     }
   };
 
-  const loadJSZip = (): Promise<StudioJsZipLib> => {
-    const jszipWindow = window as Window & { JSZip?: StudioJsZipLib };
+  const loadJSZip = (): Promise<JsZipLib> => {
+    const jszipWindow = window as Window & { JSZip?: JsZipLib };
     return new Promise((resolve, reject) => {
       if (jszipWindow.JSZip) {
         resolve(jszipWindow.JSZip);
@@ -1938,7 +1938,7 @@ export function StudioView() {
   };
 
   const extractTextFromPDF = async (file: File): Promise<string> => {
-    const pdfWindow = window as Window & { pdfjsLib?: StudioPdfJsLib };
+    const pdfWindow = window as Window & { pdfjsLib?: PdfJsLib };
     return new Promise((resolve, reject) => {
       if (pdfWindow.pdfjsLib) {
         runExtraction(pdfWindow.pdfjsLib, file, resolve, reject);
@@ -1957,7 +1957,7 @@ export function StudioView() {
     });
   };
 
-  const runExtraction = async (pdfjsLib: StudioPdfJsLib, file: File, resolve: (val: string) => void, reject: (err: unknown) => void) => {
+  const runExtraction = async (pdfjsLib: PdfJsLib, file: File, resolve: (val: string) => void, reject: (err: unknown) => void) => {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
@@ -2257,7 +2257,7 @@ export function StudioView() {
                 "flex p-0.5 gap-0.5 overflow-x-auto no-scrollbar max-w-[calc(100vw-16rem)] lg:max-w-none",
                 "bg-transparent rounded-lg"
               )}>
-                  {/* Chat lives in the shell tab bar — no in-studio shortcut. */}
+                  {/* Chat lives in the shell tab bar — no in-editor shortcut. */}
                   {[
                    { id: 'preview', label: 'Preview', icon: Eye },
                    { id: 'pins', label: `Pins${(project?.comments || []).filter((c: HTMLComment) => !c.resolved && (!c.type || c.type === 'pin')).length > 0 ? ` (${(project?.comments || []).filter((c: HTMLComment) => !c.resolved && (!c.type || c.type === 'pin')).length})` : ''}`, icon: MessageSquare },
@@ -2301,7 +2301,7 @@ export function StudioView() {
                   {canvasMode === 'preview' && (
                      <button
                        onClick={() => {
-                         const el = document.getElementById('studio-sandbox-iframe');
+                         const el = document.getElementById('folio-sandbox-iframe');
                          if (el) {
                            if (document.fullscreenElement) {
                              document.exitFullscreen();
@@ -2504,7 +2504,7 @@ export function StudioView() {
                           }}
                         >
                           <iframe
-                            id="studio-sandbox-iframe"
+                            id="folio-sandbox-iframe"
                             src={activeProposal ? undefined : `/api/raw/${project.id}/${activeFilename}?v=${activePreviewVersion}`}
                             srcDoc={activeProposal?.files[activeFilename]}
                             className="w-full h-full border-none"
@@ -2591,7 +2591,7 @@ export function StudioView() {
                          the icon lifts on hover and keeps floating while the
                          tool is armed, so a live tool is visible at a glance. */}
                      <div className="hidden lg:flex absolute left-3 top-1/2 -translate-y-1/2 flex-col gap-2 z-30">
-                         {STUDIO_TOOLS.map((tool, index) => {
+                         {EDITOR_TOOLS.map((tool, index) => {
                            const isActive = activeToolId === tool.id;
                            const Icon = tool.icon;
                            return (
@@ -2919,10 +2919,10 @@ export function StudioView() {
         onTrigger={handleDialTrigger}
         onSelect={handleDialWedge}
         onCloseAll={closeDialAll}
-        triggerAriaLabel="Studio tools"
+        triggerAriaLabel="Editor tools"
         className="lg:hidden"
         panel={
-          <StudioMoreSheet
+          <FolioMoreSheet
             activeFileList={activeFileList}
             activeFilename={activeFilename}
             canvasMode={canvasMode}
@@ -3168,11 +3168,11 @@ export function StudioView() {
 }
 
 /**
- * StudioMoreSheet — the More-wedge popover content (the legacy FAB panel minus
+ * FolioMoreSheet — the More-wedge popover content (the legacy FAB panel minus
  * the three canvas-tool rows, which the dial fan now owns). Pure presentational:
- * StudioView wires all folio state through the callbacks.
+ * FolioView wires all folio state through the callbacks.
  */
-function StudioMoreSheet({
+function FolioMoreSheet({
   activeFileList,
   activeFilename,
   canvasMode,
@@ -3186,7 +3186,7 @@ function StudioMoreSheet({
   activeFileList: string[];
   activeFilename: string;
   canvasMode: 'preview' | 'code' | 'pins' | 'comments' | 'history' | 'map' | 'analytics';
-  activeTool: StudioToolDef | null;
+  activeTool: EditorToolDef | null;
   onSelectFile: (filename: string) => void;
   onSelectMode: (mode: 'preview' | 'code' | 'pins' | 'comments' | 'history' | 'map' | 'analytics') => void;
   onStopTool: () => void;

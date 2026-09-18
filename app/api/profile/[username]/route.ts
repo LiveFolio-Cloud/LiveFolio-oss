@@ -176,7 +176,9 @@ export async function GET(
             .from('projects')
             .select('*')
             .in('id', Array.from(projectIds))
-            .eq('organization_id', personalOrgId);
+            .eq('organization_id', personalOrgId)
+            // Archived workspaces never appear on the public profile.
+            .is('archived_at', null);
 
           if (!projectsErr && projectRecords) {
             for (const prj of projectRecords) {

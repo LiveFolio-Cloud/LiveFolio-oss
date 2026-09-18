@@ -41,13 +41,25 @@ export async function POST(
     // Verify the project exists and belongs to the org
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('id')
+      .select('id, archived_at')
       .eq('id', projectId)
       .eq('organization_id', orgId)
       .single();
 
     if (projectError || !project) {
       return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+    }
+
+    // Filing a folio into an archived workspace would immediately hide it —
+    // almost never what the caller means. Unarchive the workspace first.
+    if (project.archived_at) {
+      return NextResponse.json(
+        {
+          error: 'WORKSPACE_ARCHIVED',
+          message: 'That workspace is archived. Unarchive it before moving folios into it.',
+        },
+        { status: 409 }
+      );
     }
 
     // Verify the folio exists and belongs to the same org

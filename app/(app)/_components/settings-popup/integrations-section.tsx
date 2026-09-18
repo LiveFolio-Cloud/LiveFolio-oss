@@ -350,7 +350,7 @@ export function IntegrationsSection() {
       type: 'MCP Server',
       status: isCloud ? 'Ready' : 'Cloud only',
       steps: [
-        'Copilot Studio → Settings → Connectors → "Create from OpenAPI".',
+        'Copilot the editor → Settings → Connectors → "Create from OpenAPI".',
         'Paste the OpenAPI schema URL below.',
         'Set Authentication to "API Key" and enter the Bearer credential.',
       ],
@@ -364,7 +364,7 @@ export function IntegrationsSection() {
       type: 'MCP Server',
       status: isCloud ? 'Ready' : 'Cloud only',
       steps: [
-        'Google AI Studio → Custom OpenAPI Tools.',
+        'Google AI the editor → Custom OpenAPI Tools.',
         'Import the OpenAPI schema URL below and authenticate with your key.',
       ],
       snippet: openApiUrl,

@@ -143,8 +143,12 @@ export function ShareMenu({
   };
 
   const isPublished = folio.status === 'published';
+  // Archived folios cannot be published from here — the server rejects it with
+  // a 409. Restoring is a separate, deliberate step (Archived section in the
+  // sidebar), so the toggle is disabled rather than failing on click.
+  const isArchived = !!folio.archivedAt;
 
-  // Canonical links, derived INSTANTLY from the folio the studio already
+  // Canonical links, derived INSTANTLY from the folio the editor already
   // holds (ownerUsername rides on GET /api/files/[id]; slug on the folio).
   // The pretty @username/slug link is preferred — /share/ redirects to it
   // when one exists — with the legacy direct link shown alongside.
@@ -210,15 +214,17 @@ export function ShareMenu({
           <div className="min-w-0">
             <p className="text-[13px] font-medium text-ink">Published</p>
             <p className="mt-0.5 text-[11px] leading-snug text-ink/50">
-              {isPublished
-                ? 'Live on the web — anyone with the link can view.'
-                : 'Hidden — publishing makes the link live.'}
+              {isArchived
+                ? 'Archived — restore it from the sidebar to publish again. It comes back as a draft.'
+                : isPublished
+                  ? 'Live on the web — anyone with the link can view.'
+                  : 'Hidden — publishing makes the link live.'}
             </p>
           </div>
           <Toggle
             checked={isPublished}
             onChange={() => put('status', isPublished ? 'draft' : 'published')}
-            disabled={saving}
+            disabled={saving || isArchived}
           />
         </div>
 

@@ -6,7 +6,7 @@
  *
  * - Desktop: floating card anchored under its trigger (right-aligned).
  * - Phones: our own modal style — mask + centered card (NOT an Apple bottom
- *   sheet), rendered via portal so no overflow-hidden studio ancestor clips
+ *   sheet), rendered via portal so no overflow-hidden editor ancestor clips
  *   it. Same pattern the Share menu already used.
  *
  * The header owns open/close state + outside-click/Escape; the surface is

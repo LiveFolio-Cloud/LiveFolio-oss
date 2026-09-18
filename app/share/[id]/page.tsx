@@ -224,7 +224,7 @@ export default async function Page({
       >
         This folio is currently isolated locally. To view it via the public sharing tunnel, enable{' '}
         <strong className="font-semibold text-[var(--lf-accent)]">&ldquo;Public Link&rdquo;</strong> inside
-        the Studio Share panel.
+        the editor's Share panel.
       </ShareGate>
     );
   }

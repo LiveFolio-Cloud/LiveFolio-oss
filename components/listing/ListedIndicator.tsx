@@ -2,7 +2,7 @@
 
 /**
  * Marketplace indicator — the glyph for "this folio is listed in Explore"
- * across creator surfaces (studio header, sidebar rows). Same brand mark as
+ * across creator surfaces (editor header, sidebar rows). Same brand mark as
  * the PaidIndicator ("$" = this sells): the orange LiveFolio square with a
  * white storefront glyph — no contour, no background tint.
  *

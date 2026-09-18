@@ -1,4 +1,6 @@
 import { HTMLFile, HTMLVersion, HTMLComment, ChatMessage } from './db';
+import type { PaidAccessConfig } from './gating/types';
+import type { ListingMetadata } from './listing/types';
 
 /**
  * OSS stub for lib/supabase.ts.
@@ -71,6 +73,20 @@ export type FolioRecord = {
   collaborators?: string[];
   analytics?: HTMLFile['analytics'];
   status: string;
+  project_id?: string | null;
+  folder_id?: string | null;
+  slug?: string | null;
+  slug_history?: string[] | null;
+  paid_access?: PaidAccessConfig | null;
+  thumbnail_url?: string | null;
+  listed?: boolean;
+  category?: string | null;
+  tags?: unknown[] | null;
+  creation?: string | null;
+  license?: unknown | null;
+  rights_attested_at?: string | null;
+  moderation_status?: string;
+  archived_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -103,6 +119,24 @@ export function transformFolioRecord(record: FolioRecord): HTMLFile {
     collaborators: record.collaborators || [],
     analytics: record.analytics,
     status: (record.status as 'draft' | 'published') || 'published',
+    projectId: record.project_id ?? null,
+    folderId: record.folder_id ?? null,
+    slug: record.slug ?? null,
+    slugHistory: Array.isArray(record.slug_history) ? (record.slug_history as string[]) : [],
+    paidAccess: record.paid_access ?? null,
+    thumbnailUrl: record.thumbnail_url ?? null,
+    listing: {
+      category: (record.category as ListingMetadata['category']) ?? null,
+      tags: Array.isArray(record.tags)
+        ? (record.tags as string[]).filter((t): t is string => typeof t === 'string')
+        : [],
+      creation: (record.creation as ListingMetadata['creation']) ?? null,
+      listed: record.listed === true,
+      license: record.license != null ? record.license as ListingMetadata['license'] : null,
+      rightsAttestedAt: record.rights_attested_at ?? null,
+    },
+    moderationStatus: record.moderation_status === 'hidden' ? 'hidden' : 'ok',
+    archivedAt: record.archived_at ?? null,
   };
 }
 
@@ -129,6 +163,20 @@ export function transformToFolioRecord(project: HTMLFile, orgId: string): Partia
     collaborators: project.collaborators || [],
     analytics: project.analytics || undefined,
     status: project.status || 'draft',
+    project_id: project.projectId ?? null,
+    folder_id: project.folderId ?? null,
+    slug: project.slug ?? null,
+    paid_access: project.paidAccess ?? null,
+    thumbnail_url: project.thumbnailUrl ?? null,
+    listed: project.listing?.listed ?? false,
+    category: project.listing?.category ?? null,
+    tags: project.listing?.tags ?? [],
+    creation: project.listing?.creation ?? null,
+    license: project.listing?.license ?? null,
+    rights_attested_at: project.listing?.rightsAttestedAt ?? null,
+    // NOTE: moderation_status and archived_at are intentionally NEVER written
+    // here — generic app updates must not clear a platform takedown or an
+    // owner's archive. Same contract as the Cloud transform.
     created_at: project.createdAt || new Date().toISOString(),
     updated_at: project.updatedAt || new Date().toISOString(),
   };

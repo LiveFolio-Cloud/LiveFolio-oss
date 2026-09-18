@@ -85,7 +85,7 @@ export default function ProtectionPage() {
                 <>
                   {' '}
                   Creators on paid plans publish watermark-free; the watermark never appears in
-                  Studio previews.
+                  Editor previews.
                 </>
               )}
             </p>
@@ -99,7 +99,7 @@ export default function ProtectionPage() {
               additionally enable <strong>source protection</strong>: the page then loads through
               a short-lived token, so save-as and view-source yield an empty shell, and copy
               friction (selection, context menu, save keys) raises the bar for casual copiers.
-              Studio previews and the seller&apos;s own team always receive full source.
+              Editor previews and the seller&apos;s own team always receive full source.
             </p>
           </section>
 
@@ -109,7 +109,7 @@ export default function ProtectionPage() {
               Every page a buyer receives — live views, duplicated copies and ZIP downloads — is
               stamped with an invisible, per-buyer marker. If a copy leaks onto a website,
               GitHub or an AI agent&apos;s output, the seller can run a trace on it from the
-              studio and learn who bought it, when, and through which channel. Leaking has a
+              editor and learn who bought it, when, and through which channel. Leaking has a
               personal cost and an audit trail.
             </p>
           </section>

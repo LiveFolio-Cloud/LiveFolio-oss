@@ -54,6 +54,9 @@ export async function GET() {
           // (silent drop — same class of bug as the gate deactivation).
           paid_access: project.paid_access ?? null,
           thumbnail_url: project.thumbnail_url ?? null,
+          // Owner-facing list: archived workspaces are RETURNED (the sidebar
+          // groups them under "Archived"), so the flag has to ride along.
+          archived_at: project.archived_at ?? null,
           created_at: project.created_at,
           updated_at: project.updated_at,
           folio_count: countError ? 0 : (count || 0),

@@ -21,7 +21,7 @@
  * (NOT the zustand/persist middleware — the existing shell style). Two keys,
  * both read once at store creation:
  * - `LiveFolio_app_view.<folioId>` — the active shell tab id (P1-T02 spec);
- *   stale/unknown ids resolve to `studio`.
+ *   stale/unknown ids resolve to `editor`.
  * - `LiveFolio_app_<folioId>` — the rest of the persisted UI slice
  *   (`chatDraft`, `chatScroll`), one JSON object.
  * Everything else (`project`, `status`, `activeProposal`, `isAiResponding`,
@@ -33,15 +33,15 @@
  * P2-T01 ADDITIONS (implemented here by the ChatView agent; P2-T00 must keep
  * the `sendPrompt` / `commitProposal` / `clearChat` signatures exact):
  * - `sendPrompt` / `commitProposal` / `clearChat` — no longer stubs; they
- *   run the v1 streaming pipeline (ported from StudioClient 1584–1806, 1376–
+ *   run the v1 streaming pipeline (ported from the legacy editor
  *   1441) against the store state.
  * - Streaming text + transient error: `aiStreamText`, `chatError`.
- * - Chat-context mirrors shared with the keep-alive Studio tab (spike §1.2
+ * - Chat-context mirrors shared with the keep-alive Editor tab (spike §1.2
  *   "activeFilename sync"): `activeFilename`, `isAutoApply`,
  *   `targetedElement`, `attachedAsset`, and the design-system mirrors
  *   (`selectedTheme` … `projectMode`) hydrated from `project.designPreferences`.
  * - Tool orchestration (Epic #96): `updateToolCallStatus` + `executeToolCall`
- *   actions (ported from StudioClient 1446–1582) so the ChatView tool cards
+ *   actions (ported from the legacy editor) so the ChatView tool cards
  *   and the streaming pipeline share one implementation.
  */
 import { createStore } from 'zustand/vanilla';
@@ -64,7 +64,7 @@ export interface ProposedFile {
 
 /**
  * The proposal awaiting apply/decline, mirrored from the v1
- * `StudioClient` state at line 555 (shape kept identical so the P2 fork maps
+ * `FolioView` state (shape kept identical so the fork maps
  * 1:1).
  */
 export interface ActiveProposal {
@@ -79,7 +79,7 @@ export interface TargetedElement {
   tagName: string;
 }
 
-/** Design-system preferences mirror (v1 StudioClient lines 219–223). */
+/** Design-system preferences mirror (legacy editor lines 219–223). */
 export type FolioProjectMode = HTMLFile['projectMode'];
 export interface DesignSystemPrefs {
   theme: string;
@@ -89,7 +89,7 @@ export interface DesignSystemPrefs {
   projectMode: NonNullable<FolioProjectMode>;
 }
 
-/** v1 StudioClient design-state defaults (lines 219–223). */
+/** legacy editor design-state defaults (lines 219–223). */
 export const DESIGN_DEFAULTS: DesignSystemPrefs = {
   theme: 'Warm Editorial',
   typography: 'Lora & Inter',
@@ -117,7 +117,7 @@ export interface FolioState {
   error: string | null;
 
   // --- Persisted UI slice -----------------------------------------------
-  /** Active shell tab id; always a registered view (falls back to `studio`). */
+  /** Active shell tab id; always a registered view (falls back to `editor`). */
   view: string;
   /** Chat composer draft, persisted per folio across reloads/tab switches. */
   chatDraft: string;
@@ -125,7 +125,7 @@ export interface FolioState {
   chatScroll: number;
 
   // --- Chat/AI session state (in-memory, NOT persisted) -----------------
-  /** Proposal awaiting apply/decline in the Studio overlay (P2-T00). */
+  /** Proposal awaiting apply/decline in the editor overlay (P2-T00). */
   activeProposal: ActiveProposal | null;
   isAiResponding: boolean;
   /** Free-form status message, '' when idle (v1 `aiStreamStatus` mirror). */
@@ -134,13 +134,13 @@ export interface FolioState {
   aiStreamText: string;
   /** Transient chat error (generation/tool/commit failures); cleared on next send. */
   chatError: string | null;
-  /** The canvas file the folio editor is showing; shared with StudioView. */
+  /** The canvas file the folio editor is showing; shared with FolioView. */
   activeFilename: string;
-  /** The version the preview iframe is showing; set on fetch and by StudioView. */
+  /** The version the preview iframe is showing; set on fetch and by FolioView. */
   activePreviewVersion: string;
   /** Auto-apply toggle (v1 `isAutoApply`, default true). */
   isAutoApply: boolean;
-  /** Targeted element banner (Point & Polish); set by the Studio iframe bridge. */
+  /** Targeted element banner (Point & Polish); set by the editor iframe bridge. */
   targetedElement: TargetedElement | null;
   /** Attached visual asset path included in the next prompt (v1). */
   attachedAsset: string | null;
@@ -171,7 +171,7 @@ export interface FolioState {
    *  design mirrors from the fetched project. */
   fetchProject: () => Promise<void>;
   /** Set the active tab; writes `LiveFolio_app_view.<folioId>` and resolves
-   *  stale ids to `studio`. */
+   *  stale ids to `editor`. */
   setView: (id: string) => void;
   /** Update the persisted chat draft (`LiveFolio_app_<folioId>`). */
   setChatDraft: (draft: string) => void;
@@ -180,12 +180,12 @@ export interface FolioState {
   /** Re-read the legacy global localStorage keys into the AI-config mirrors
    *  (call after the P2-T02 settings popup writes them). */
   syncAiConfigFromGlobal: () => void;
-  /** Set the file the Studio canvas shows (iframe src + `Current Screen`
-   *  scope); shared with the Studio tab via the keep-alive provider. */
+  /** Set the file the editor canvas shows (iframe src + `Current Screen`
+   *  scope); shared with the Editor tab via the keep-alive provider. */
   setActiveFilename: (filename: string) => void;
-  /** Set the version the preview iframe shows (shared with StudioView). */
+  /** Set the version the preview iframe shows (shared with FolioView). */
   setActivePreviewVersion: (versionId: string) => void;
-  /** Download the active preview version as a ZIP (ported from StudioClient). */
+  /** Download the active preview version as a ZIP (ported from legacy editor). */
   exportFolio: () => void;
   /** Toggle auto-apply (v1 `isAutoApply`). */
   setIsAutoApply: (value: boolean) => void;
@@ -203,7 +203,7 @@ export interface FolioState {
    * `/api/files/<id>/ai-stream` for Gemini models, `/api/files/<id>/ai`
    * otherwise, tool calls via `/api/chat/tools/execute`, propose/apply
    * writing `activeProposal`. On success the project is refetched (chats and
-   * versions land server-side). Switches the shell to the Studio tab when a
+   * versions land server-side). Switches the shell to the Editor tab when a
    * proposal awaits review or an auto-apply lands (v1 auto-dismisses the
    * chat overlay to reveal the canvas).
    */
@@ -239,7 +239,7 @@ export interface FolioState {
 
 // ---------------------------------------------------------------------------
 // Legacy localStorage keys (single source of truth for AI config) — key names
-// identical to the v1 UI's (see `app/studio/[id]/StudioClient.tsx`).
+// identical to the v1 UI's.
 // ---------------------------------------------------------------------------
 const GLOBAL_KEYS = {
   model: 'LiveFolio_selected_model',
@@ -271,7 +271,7 @@ function readGlobal(key: string, fallback = ''): string {
 }
 
 /**
- * Persona resolution precedence (v1 `StudioClient` lines 1188–1209): the
+ * Persona resolution precedence (legacy editor): the
  * user-level `LiveFolio_ai_persona` key wins, then the folio-level
  * `project.aiPersona`, then the defaults.
  */
@@ -320,7 +320,7 @@ function readAiMirrors(project: HTMLFile | null) {
 }
 
 /** Design-system mirrors hydrated from the folio's server-side prefs. The
- *  state fields are the v1 `StudioClient` names (`selectedTheme` …), so the
+ *  state fields are the v1 `legacy editor` names (`selectedTheme` …), so the
  *  returned keys are mapped to those. */
 function readDesignMirrors(project: HTMLFile | null): {
   selectedTheme: string;
@@ -516,7 +516,7 @@ export function createFolioStore(folioId: string): StoreApi<FolioState> {
       const filenames = Object.keys(files);
       if (filenames.length === 0) return;
 
-      // Pure-JS ZIP generator (ported from StudioClient handleExport).
+      // Pure-JS ZIP generator (ported from the legacy editorhandleExport).
       const encoder = new TextEncoder();
       const fileEntries = [];
       const centralDir = [];
@@ -641,7 +641,7 @@ export function createFolioStore(folioId: string): StoreApi<FolioState> {
         projectMode: prefs.projectMode ?? s.projectMode,
       })),
 
-    // --- P2-T01: the v1 streaming pipeline (ported from StudioClient) -----
+    // --- P2-T01: the v1 streaming pipeline (ported from legacy editor) -----
 
     updateToolCallStatus: (toolCallId, status, statusMessage, result, error) => {
       const project = get().project;
@@ -938,13 +938,13 @@ export function createFolioStore(folioId: string): StoreApi<FolioState> {
                             'AI generated a new design proposal.',
                         },
                       });
-                      // Surface the proposal overlay on the Studio tab (v1
+                      // Surface the proposal overlay on the Editor tab (v1
                       // dismisses the chat overlay to reveal the canvas).
-                      get().setView('studio');
+                      get().setView('editor');
                     }
                     await get().fetchProject();
                     if (isAutoApply) {
-                      get().setView('studio');
+                      get().setView('editor');
                     }
                   }
                 } else if (data.type === 'error') {
@@ -979,7 +979,7 @@ export function createFolioStore(folioId: string): StoreApi<FolioState> {
                 // Reload to show pending tool cards (or the results).
                 await get().fetchProject();
                 if (pendingTools.length === 0 && isAutoApply) {
-                  get().setView('studio');
+                  get().setView('editor');
                 }
               } else {
                 if (!isAutoApply && data.proposedFiles) {
@@ -990,11 +990,11 @@ export function createFolioStore(folioId: string): StoreApi<FolioState> {
                         data.explanation || 'AI generated a new design proposal.',
                     },
                   });
-                  get().setView('studio');
+                  get().setView('editor');
                 }
                 await get().fetchProject();
                 if (isAutoApply) {
-                  get().setView('studio');
+                  get().setView('editor');
                 }
               }
             }

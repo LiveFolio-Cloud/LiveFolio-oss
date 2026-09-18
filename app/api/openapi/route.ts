@@ -41,7 +41,10 @@ export async function GET() {
             open_comments: { type: "integer" },
             updated_at: { type: "string", format: "date-time" },
             share_url: { type: "string" },
-            studio_url: { type: "string" }
+            edit_url: { type: "string" },
+            status: { type: "string", enum: ["draft", "published"] },
+            archived: { type: "boolean" },
+            archived_at: { type: "string", format: "date-time", nullable: true }
           }
         },
         ProjectDetail: {
@@ -76,6 +79,32 @@ export async function GET() {
       { ApiKeyAuth: [] }
     ],
     paths: {
+      "/api/files/{id}/archive": {
+        post: {
+          operationId: "archive_folio",
+          summary: "Archive a folio: unpublished, unlisted, and hidden from every public surface. Reversible",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } }
+          ],
+          responses: {
+            "200": { description: "Archived. Returns { success, project: { id, status, archived, archivedAt }, note }" },
+            "404": { description: "Folio not found" }
+          }
+        }
+      },
+      "/api/files/{id}/unarchive": {
+        post: {
+          operationId: "unarchive_folio",
+          summary: "Restore an archived folio as a draft (never republishes automatically)",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } }
+          ],
+          responses: {
+            "200": { description: "Restored. Returns { success, project: { id, status, archived, archivedAt }, note }" },
+            "404": { description: "Folio not found" }
+          }
+        }
+      },
       "/api/files": {
         get: {
           operationId: "list_projects",

@@ -4,7 +4,7 @@
  * Unified ChatView (P2-T01) — one component, two modes (arch §5):
  *
  * - `mode="folio"` — a folio is selected: the Chat tab renders
- *   `FolioChatPanel` (fork of `components/studio/ChatPanel.tsx` re-wired to
+ *   `FolioChatPanel` (fork of `components/folio/ChatPanel.tsx` re-wired to
  *   the per-folio provider store — editing chat via the store's `sendPrompt`
  *   streaming pipeline, tool calls, proposals). Must be rendered inside
  *   `<FolioProvider>` (the keep-alive tab container does this).

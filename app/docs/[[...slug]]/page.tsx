@@ -49,7 +49,7 @@ const SECTION_ICONS: Record<string, React.ReactNode> = {
 
 const SECTION_DESCRIPTIONS: Record<string, string> = {
   "user-guide":
-    "Learn how to create, version, share, and embed interactive folios. Covers the dashboard, studio editor, comments, and reactions.",
+    "Learn how to create, version, share, and embed interactive folios. Covers the dashboard, folio editor, comments, and reactions.",
   "mcp-agent":
     "Connect AI coding agents (Claude, Cursor, Copilot) to LiveFolio via the Model Context Protocol. Publish folios programmatically.",
   "api-reference":

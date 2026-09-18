@@ -4,7 +4,7 @@
  * P1-T01 — WorkspaceSidebar
  *
  * Fork of `components/dashboard/Sidebar.tsx` (read-only source) for the `/app`
- * shell. Spec: `phases/phase-1.md#p1-t01`; import map: `spikes/studio-canvas-extraction.md` §1.3.
+ * shell. Spec: `phases/phase-1.md#p1-t01`; import map: `spikes/folio-canvas-extraction.md` §1.3.
  *
  * KEPT from the original, semantics unchanged: accordion workspace groups,
  * folio list with draft badge, drag-and-drop move between workspaces, inline
@@ -61,6 +61,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Receipt,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import MoveToProjectDialog from '@/components/dashboard/MoveToProjectDialog';
@@ -93,6 +95,8 @@ interface FolioData {
   paidAccess?: PaidAccessConfig | null;
   /** Marketplace listing metadata (the /api/files records carry it). */
   listing?: ListingMetadata | null;
+  /** Set while the folio is archived — moves the row into the Archived group. */
+  archivedAt?: string | null;
 }
 
 interface WorkspaceData {
@@ -104,6 +108,53 @@ interface WorkspaceData {
   folio_count?: number;
   /** Workspace gate default (paid_access JSONB). */
   paid_access?: PaidAccessConfig | null;
+  /** Set while the workspace is archived — moves it into the Archived group. */
+  archived_at?: string | null;
+}
+
+/**
+ * Where a floating row menu is pinned, in viewport coordinates.
+ *
+ * `fromBottom` records which edge `y` measures from, so a menu that has to
+ * open upward can be anchored by its BOTTOM edge. That way it grows upward
+ * from the row regardless of how tall it actually renders — the only guess
+ * left is whether there is room below, and overestimating there just flips
+ * the menu a little early.
+ */
+interface MenuAnchor {
+  x: number;
+  y: number;
+  fromBottom: boolean;
+}
+
+/** Generous ceiling for the tallest row menu (4 items + separator + padding). */
+const MENU_MAX_HEIGHT = 200;
+const MENU_GAP = 4;
+
+/**
+ * Pin a row menu to its trigger, flipping it above the row when the row sits
+ * too low in the viewport. Without this, a menu opened from the bottom of the
+ * sidebar (the Archived section, or any folio near the fold) renders past the
+ * bottom edge and is simply invisible — it is `position: fixed`, so nothing
+ * scrolls it back into view.
+ */
+function anchorRowMenu(el: HTMLElement): MenuAnchor {
+  const rect = el.getBoundingClientRect();
+  const fitsBelow = rect.bottom + MENU_GAP + MENU_MAX_HEIGHT <= window.innerHeight;
+  return {
+    x: rect.right - 12,
+    y: fitsBelow ? rect.bottom + MENU_GAP : window.innerHeight - rect.top + MENU_GAP,
+    fromBottom: !fitsBelow,
+  };
+}
+
+/** Spreads a MenuAnchor into inline styles for the fixed-positioned menu. */
+function menuAnchorStyle(a: MenuAnchor): React.CSSProperties {
+  return {
+    left: a.x,
+    ...(a.fromBottom ? { bottom: a.y } : { top: a.y }),
+    transform: 'translateX(-100%)',
+  };
 }
 
 export interface WorkspaceSidebarProps extends SidebarSlotProps {
@@ -245,7 +296,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
   const [viewOrder, setViewOrder] = useState<ViewOrder>('recent');
   const [isViewOpen, setViewOpen] = useState(false);
   const viewMenuRef = useRef<HTMLDivElement>(null);
-  const [viewMenuPosition, setViewMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [viewMenuPosition, setViewMenuPosition] = useState<MenuAnchor | null>(null);
 
   // Hydration-safe pref restore: localStorage is read AFTER the first render
   // (initial render matches SSR exactly — same pattern as the shell's layout
@@ -273,8 +324,11 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(
     () => new Set(),
   );
+  // Archived shelf starts closed — it is a deliberate destination, not a
+  // place the eye should land on every session.
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [menuPosition, setMenuPosition] = useState<MenuAnchor | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Dialogs
@@ -381,6 +435,47 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
     }
   };
 
+  /** Archive hides a folio everywhere public without deleting it. Reversible,
+   *  so no confirm step — the row just moves to the Archived group. */
+  const handleArchiveFolio = async (folioId: string) => {
+    try {
+      await fetch(`/api/files/${folioId}/archive`, { method: 'POST' });
+      setOpenMenuId(null);
+      setMenuPosition(null);
+      refresh();
+    } catch {
+      // archive failed — keep the list as-is
+    }
+  };
+
+  const handleUnarchiveFolio = async (folioId: string) => {
+    try {
+      await fetch(`/api/files/${folioId}/unarchive`, { method: 'POST' });
+      setOpenMenuId(null);
+      setMenuPosition(null);
+      refresh();
+    } catch {
+      // unarchive failed — keep the list as-is
+    }
+  };
+
+  /** Restoring a workspace brings every folio in it back as a draft — worth a
+   *  confirm, since the owner is about to see a pile of unpublished rows. */
+  const handleUnarchiveWorkspace = async (workspaceId: string) => {
+    if (
+      !window.confirm(
+        'Restore this workspace? Its folios come back as drafts and stay unpublished until you publish them.'
+      )
+    )
+      return;
+    try {
+      await fetch(`/api/projects/${workspaceId}/unarchive`, { method: 'POST' });
+      refresh();
+    } catch {
+      // unarchive failed — keep the list as-is
+    }
+  };
+
   const handleDropOnWorkspace = async (workspaceId: string) => {
     if (!dragFolioId) return;
     const folioId = dragFolioId;
@@ -399,22 +494,21 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
     }
   };
 
-  // Claude-style menu anchor: open the ⋯ menu near the item.
+  // Claude-style menu anchor: open the ⋯ menu near the item, flipping above
+  // the row when it sits too low to fit below.
   const openFolioMenu = (e: React.MouseEvent, folioId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setOpenMenuId(folioId);
-    setMenuPosition({ x: rect.right - 12, y: rect.bottom + 4 });
+    setMenuPosition(anchorRowMenu(e.currentTarget as HTMLElement));
   };
 
   const openViewMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setViewOpen((open) => {
       const next = !open;
-      setViewMenuPosition(next ? { x: rect.right - 12, y: rect.bottom + 4 } : null);
+      setViewMenuPosition(next ? anchorRowMenu(e.currentTarget as HTMLElement) : null);
       return next;
     });
   };
@@ -438,15 +532,37 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
             (f.description ?? '').toLowerCase().includes(q),
         );
 
-  const unfiledFolios = filteredFolios.filter((f) => !f.projectId);
+  // Archived items are pulled out of the normal tree and rendered in their own
+  // collapsed group at the bottom — the owner's "out of the way, not gone".
+  // An archived folio is one whose own flag is set; a folio inside an archived
+  // workspace is reachable through that workspace's group instead.
+  const archivedWorkspaces = workspaces.filter((w) => !!w.archived_at);
+  const archivedWorkspaceIds = new Set(archivedWorkspaces.map((w) => w.id));
+  const archivedFolios = filteredFolios.filter(
+    (f) => !!f.archivedAt && !(f.projectId && archivedWorkspaceIds.has(f.projectId)),
+  );
+  const archivedFolioIds = new Set(archivedFolios.map((f) => f.id));
+  const archivedWorkspaceFolios = filteredFolios.filter(
+    (f) => !!f.projectId && archivedWorkspaceIds.has(f.projectId),
+  );
+  const hasArchived = archivedFolios.length > 0 || archivedWorkspaces.length > 0;
+
+  const liveFolios = filteredFolios.filter((f) => !archivedFolioIds.has(f.id));
+  const liveWorkspaces = workspaces.filter((w) => !w.archived_at);
+
+  const unfiledFolios = liveFolios.filter((f) => !f.projectId);
   const hasSearch = q.length > 0;
 
+  // Section labels are small-caps signposts, NOT headings — they must read
+  // quieter than the item titles beneath them. (They used to be 12px bold
+  // while the titles were 11px, which inverted the hierarchy: "WORKSPACES"
+  // shouted louder than the folio names it labelled.)
   const sectionLabel =
-    'px-2.5 pt-3 pb-1 text-xs font-bold tracking-tight text-ink/45 ';
+    'px-2.5 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40';
   const itemBase = cn(
     'group/item w-full flex items-center gap-2 px-2.5 font-medium transition-colors rounded-lg text-left',
     // Phones (drawer, full width): larger titles, tighter rows.
-    phone ? 'py-1 text-[13px]' : 'py-1.5 text-[11px]'
+    phone ? 'py-1 text-[13px]' : 'py-1.5 text-[12px]'
   );
 
   // Dialogs must render in BOTH states — the rail's New folio button
@@ -461,7 +577,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
           folioId={moveFolio.id}
           folioTitle={moveFolio.title}
           currentProjectId={moveFolio.projectId || null}
-          projects={workspaces}
+          projects={liveWorkspaces}
           onMoved={() => {
             refresh();
           }}
@@ -745,14 +861,16 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
         {activeGroup === 'workspace' ? (
           /* ── Group by workspace (accordions, as in the original) ── */
           <>
-            <div className={sectionLabel}>Workspaces</div>
-            {workspaces.length === 0 && !isLoading ? (
+            {/* No "Workspaces" header — folder rows are self-evident, and the
+                label only pushed the real content down. "Unfiled" stays
+                because it marks a boundary, not a category. */}
+            {liveWorkspaces.length === 0 && !isLoading ? (
               <p className="px-2.5 py-1 text-sm font-medium text-ink/45 ">
                 No workspaces yet — create one above
               </p>
             ) : (
-              workspaces.map((w) => {
-                const workspaceFolios = filteredFolios.filter((f) => f.projectId === w.id);
+              liveWorkspaces.map((w) => {
+                const workspaceFolios = liveFolios.filter((f) => f.projectId === w.id);
                 // With a search active, hide groups with no matches.
                 if (hasSearch && workspaceFolios.length === 0) return null;
                 const isOpen = expandedWorkspaces.has(w.id);
@@ -761,7 +879,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
                     <div
                       className={cn(
                         itemBase,
-                        'text-ink/80 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10 cursor-pointer',
+                        'text-ink/90 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10 cursor-pointer',
                         dragOverWorkspaceId === w.id && 'bg-[var(--app-accent)]/10 ring-1 ring-vermillion/50',
                         dragFolioId && dragOverWorkspaceId !== w.id && 'opacity-90',
                       )}
@@ -784,9 +902,9 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
                         className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
                       >
                         {isOpen ? (
-                          <ChevronDown size={11} className="shrink-0 text-ink/40" />
+                          <ChevronDown size={12} className="shrink-0 text-ink/60" />
                         ) : (
-                          <ChevronRight size={11} className="shrink-0 text-ink/40" />
+                          <ChevronRight size={12} className="shrink-0 text-ink/60" />
                         )}
                         <FolderKanban size={13} className="shrink-0 text-[var(--app-accent)]/70" />
                         <span className="truncate">{w.name}</span>
@@ -796,7 +914,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
                         ) : (
                           <Lock size={10} className="shrink-0 text-ink/45" />
                         )}
-                        <span className="text-xs text-ink/45 shrink-0">
+                        <span className="text-[11px] tabular-nums text-ink/45 shrink-0">
                           {workspaceFolios.length}
                         </span>
                       </button>
@@ -883,12 +1001,12 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
               <div className="px-2.5 py-2 text-center">
                 <Loader2 size={12} className="animate-spin mx-auto text-ink/20" />
               </div>
-            ) : filteredFolios.length === 0 ? (
+            ) : liveFolios.length === 0 ? (
               <p className="px-2.5 py-1 text-sm font-medium text-ink/45 ">
                 {hasSearch ? 'No folios match your search' : 'No folios yet — create one above'}
               </p>
             ) : (
-              filteredFolios.map((f) => (
+              liveFolios.map((f) => (
                 <FolioItem
                   key={f.id}
                   folio={f}
@@ -916,6 +1034,76 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
               Refreshing…
             </span>
           </div>
+        )}
+
+        {/* Archived — the "out of the way, not gone" shelf. Reached by the
+            menu on any folio or from workspace settings. Nothing here is
+            publicly reachable, and nothing here has been deleted. */}
+        {hasArchived && (
+          <>
+            <button
+              type="button"
+              onClick={() => setArchivedOpen((v) => !v)}
+              aria-expanded={archivedOpen}
+              className={cn(
+                sectionLabel,
+                'w-full flex items-center gap-1 hover:text-ink/70 transition-colors cursor-pointer',
+              )}
+            >
+              {archivedOpen ? (
+                <ChevronDown size={12} className="shrink-0" />
+              ) : (
+                <ChevronRight size={12} className="shrink-0" />
+              )}
+              Archived
+              <span className="text-xs font-medium text-ink/45">
+                {archivedWorkspaces.length + archivedFolios.length}
+              </span>
+            </button>
+            {archivedOpen && (
+              <div className="ml-0 pl-2.5 border-l border-[#0F0F0D]/5 dark:border-[#F4F4F0]/10">
+                <p className="px-2.5 pt-0.5 pb-1.5 text-xs font-medium leading-snug text-ink/40">
+                  Hidden from everyone but you. They still count toward storage.
+                </p>
+                {archivedWorkspaces.map((w) => (
+                  <div key={w.id} className={cn(itemBase, 'text-ink/70')}>
+                    <FolderKanban size={13} className="shrink-0 text-ink/40" />
+                    <span className="truncate flex-1">{w.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleUnarchiveWorkspace(w.id)}
+                      title="Restore this workspace"
+                      className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-bold text-ink/50 transition-colors hover:bg-[var(--app-accent)]/10 hover:text-[var(--app-accent)] cursor-pointer"
+                    >
+                      <ArchiveRestore size={11} /> Restore
+                    </button>
+                  </div>
+                ))}
+                {archivedWorkspaceFolios.map((f) => (
+                  <FolioItem
+                    key={f.id}
+                    folio={f}
+                    pathname={pathname}
+                    onOpenMenu={openFolioMenu}
+                    isDragging={false}
+                    onDragStart={() => {}}
+                    onDragEnd={() => {}}
+                  />
+                ))}
+                {archivedFolios.map((f) => (
+                  <FolioItem
+                    key={f.id}
+                    folio={f}
+                    pathname={pathname}
+                    onOpenMenu={openFolioMenu}
+                    isDragging={false}
+                    onDragStart={() => {}}
+                    onDragEnd={() => {}}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* Purchases — the buyer's library, pinned in their own sidebar */}
@@ -963,7 +1151,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
         <div
           ref={menuRef}
           className="fixed z-[450] w-44 py-1 rounded-xl bg-white shadow-xl ring-1 ring-black/5 dark:bg-[#171714] dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100"
-          style={{ top: menuPosition.y, left: menuPosition.x, transform: 'translateX(-100%)' }}
+          style={menuAnchorStyle(menuPosition)}
         >
           <button
             onClick={() => {
@@ -986,6 +1174,26 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
           >
             <ArrowUpRight size={12} /> Open in app
           </button>
+          {/* Archive is the reversible counterpart to Delete below — no
+              confirm dialog, because nothing is destroyed. */}
+          <button
+            onClick={() => {
+              const f = folios.find((x) => x.id === openMenuId);
+              if (f?.archivedAt) void handleUnarchiveFolio(openMenuId);
+              else void handleArchiveFolio(openMenuId);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] font-medium text-ink/70 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10  text-left rounded-lg transition-colors cursor-pointer"
+          >
+            {folios.find((x) => x.id === openMenuId)?.archivedAt ? (
+              <>
+                <ArchiveRestore size={12} /> Unarchive
+              </>
+            ) : (
+              <>
+                <Archive size={12} /> Archive
+              </>
+            )}
+          </button>
           <div className="my-1 h-px bg-[#0F0F0D]/5 dark:bg-[#F4F4F0]/10" />
           <button
             onClick={() => handleDeleteFolio(openMenuId)}
@@ -1003,7 +1211,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
         <div
           ref={viewMenuRef}
           className="fixed z-[450] w-48 py-1.5 rounded-xl bg-white shadow-xl ring-1 ring-black/5 dark:bg-[#171714] dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100"
-          style={{ top: viewMenuPosition.y, left: viewMenuPosition.x, transform: 'translateX(-100%)' }}
+          style={menuAnchorStyle(viewMenuPosition)}
         >
           <p className="px-3 pb-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">
             Group by
@@ -1094,6 +1302,9 @@ function FolioItem({
   onDragEnd: () => void;
 }) {
   const isActive = pathname === `/app/${folio.id}`;
+  // Anything that is not explicitly a draft is treated as published — that is
+  // how the rest of the app reads a missing status.
+  const isDraft = folio.status === 'draft';
   // Phone (full-screen drawer): larger titles, tighter rows.
   const phone = useLayoutStore((s) => s.phone);
   return (
@@ -1107,7 +1318,7 @@ function FolioItem({
         isDragging && 'opacity-40',
         isActive
           ? 'bg-[var(--app-accent)]/5 text-[var(--app-accent)]'
-          : 'text-ink/75 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10 hover:text-ink',
+          : 'text-ink/85 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10 hover:text-ink',
       )}
     >
       <Link href={`/app/${folio.id}`} className="flex items-center gap-2 flex-1 min-w-0 pl-1.5">
@@ -1115,12 +1326,22 @@ function FolioItem({
         <PaidIndicator config={folio.paidAccess} />
         <ListedIndicator listing={folio.listing} />
         <span className="truncate flex-1">{folio.title || 'Untitled'}</span>
-        {folio.status === 'draft' && (
-          <span
-            title="Draft"
-            className="h-1.5 w-1.5 rounded-full bg-[#0F0F0D]/25 dark:bg-[#F4F4F0]/25 shrink-0"
-          />
-        )}
+        {/* Publish state — rendered in BOTH states. Previously only drafts got
+            a mark (a 6px dot at 25% opacity, all but invisible), which left
+            published folios unmarked: "live" and "no indicator" looked
+            identical. Filled green = live, hollow = draft is the convention
+            every publishing tool uses, so it needs no learning. */}
+        <span
+          role="img"
+          title={isDraft ? 'Draft — only you can see it' : 'Published — live on the web'}
+          aria-label={isDraft ? 'Draft' : 'Published'}
+          className={cn(
+            'h-2 w-2 shrink-0 rounded-full',
+            isDraft
+              ? 'border border-ink/35 dark:border-[#F4F4F0]/35'
+              : 'bg-emerald-500 dark:bg-emerald-400',
+          )}
+        />
       </Link>
       <button
         onClick={(e) => onOpenMenu(e, folio.id)}

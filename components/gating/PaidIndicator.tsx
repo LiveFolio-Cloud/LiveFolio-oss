@@ -2,7 +2,7 @@
 
 /**
  * Monetization indicator — the ONE glyph for "this sells" across creator
- * surfaces (sidebar folio/workspace rows, the studio header). Buyer-side
+ * surfaces (sidebar folio/workspace rows, the editor header). Buyer-side
  * surfaces keep the lock badge (paid = locked to them); creators see the
  * dollar badge (paid = earns money). Hover shows type + price + preview.
  *

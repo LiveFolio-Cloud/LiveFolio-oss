@@ -54,6 +54,10 @@ export async function GET(
       if (!project) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
+      // Archived folios are gone from the public metadata surface entirely.
+      if (project.archivedAt) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
 
       const isPrivate = !!project.isPrivate;
       const keyValid = !!project.accessKey && timingSafeEqualStr((project.accessKey || '').trim(), accessKeyParam.trim());
@@ -81,7 +85,7 @@ export async function GET(
     // Cloud Mode — extract UUID from human-readable slug before querying
     const queryId = extractUUIDFromSlug(targetId);
     const folioSelect =
-      'id, organization_id, title, description, is_private, allow_comments, presentation_mode_only, access_key, versions, reactions, comments, status, paid_access, thumbnail_url, project_id, slug';
+      'id, organization_id, title, description, is_private, allow_comments, presentation_mode_only, access_key, versions, reactions, comments, status, paid_access, thumbnail_url, project_id, slug, archived_at';
     let { data, error } = await supabaseAdmin
       .from('folios')
       .select(folioSelect)
@@ -107,7 +111,8 @@ export async function GET(
 
     // Content takedown — moderated-down folios behave as unpublished on the
     // public metadata surface too (viewers see "not found", never a leak).
-    if (project.moderationStatus === 'hidden') {
+    // Archived folios are treated identically.
+    if (project.moderationStatus === 'hidden' || project.archivedAt) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     const latestVersion = project.versions[project.versions.length - 1];
@@ -291,7 +296,9 @@ export async function POST(
         }
       }
       if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-      
+      // Archived: don't even confirm a key is held for this id.
+      if (project.archivedAt) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+
       const serverKey = (project.accessKey || '').trim();
       const isValid = serverKey !== '' && timingSafeEqualStr(serverKey, sanitizedAttempt);
       
@@ -302,7 +309,7 @@ export async function POST(
     const queryId = extractUUIDFromSlug(targetId);
     let { data, error } = await supabaseAdmin
       .from('folios')
-      .select('access_key')
+      .select('access_key, archived_at')
       .eq('id', queryId)
       .maybeSingle();
 
@@ -318,7 +325,8 @@ export async function POST(
     }
 
     if (error || !data) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    
+    if (data.archived_at) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+
     const serverKey = (data.access_key || '').trim();
     const isValid = serverKey !== '' && timingSafeEqualStr(serverKey, sanitizedAttempt);
     

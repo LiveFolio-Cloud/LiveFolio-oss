@@ -5,7 +5,7 @@
  * entry points (Epic #135, GitHub #138).
  *
  * Tab 1 "Blank"   — title/description, mode picker, design prefs, sharing
- *                   section → POST /api/files → redirect to /studio/{id}.
+ *                   section → POST /api/files → redirect to /app/{id}.
  * Tab 2 "With AI" — skeleton only in this phase; P3-T00 fills it in.
  *                   Gated at runtime in OSS (/api/files/ai-create is
  *                   stripped from the OSS build — spike Q4).
@@ -32,7 +32,7 @@ interface CreateFolioModalProps {
   onCreated?: (projectId: string) => void;
 }
 
-// Design preference choices — mirrors components/studio/DesignDrawer.tsx
+// Design preference choices — mirrors components/folio/DesignDrawer.tsx
 // (PALETTES / TYPOGRAPHY_PAIRINGS) plus common design-systems/ themes.
 const THEME_OPTIONS = [
   'Night Emerald',
@@ -369,7 +369,7 @@ export default function CreateFolioModal({ isOpen, onClose, onCreated }: CreateF
                 </p>
               )}
               {submissionPhase === 'redirecting' && (
-                <p className="text-xs text-[var(--app-accent)]">Opening studio…</p>
+                <p className="text-xs text-[var(--app-accent)]">Opening editor…</p>
               )}
             </div>
           </div>

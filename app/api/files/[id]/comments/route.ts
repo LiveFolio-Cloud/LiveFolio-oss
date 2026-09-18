@@ -187,6 +187,8 @@ export async function POST(
         }
       }
       if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      // Archived folios are closed to new public notes.
+      if (project.archivedAt) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
 
       const result = await runTransaction(async (db) => {
         const pIndex = db.findIndex((p) => p.id === targetId);
@@ -208,14 +210,14 @@ export async function POST(
     // NOT the full row — avoids transferring 1-10 MB of version HTML on every comment POST.
     let { data: current, error: fetchError } = await supabaseAdmin
       .from('folios')
-      .select('id, organization_id, comments, allow_comments, title, is_private, access_key')
+      .select('id, organization_id, comments, allow_comments, title, is_private, access_key, archived_at')
       .eq('id', queryId)
       .maybeSingle();
 
     if (!current && !fetchError && queryId !== targetId) {
       const res = await supabaseAdmin
         .from('folios')
-        .select('id, organization_id, comments, allow_comments, title, is_private, access_key')
+        .select('id, organization_id, comments, allow_comments, title, is_private, access_key, archived_at')
         .eq('id', targetId)
         .maybeSingle();
       if (!res.error && res.data) current = res.data;
@@ -224,6 +226,12 @@ export async function POST(
 
     if (fetchError || !current) throw new Error('Project not found');
     const effectiveOrgId = current.organization_id;
+
+    if (current.archived_at) {
+      // Same 404 as a missing folio — an archived folio should not confirm
+      // its own existence to a passer-by.
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
 
     if (current.allow_comments === false) {
       return NextResponse.json({ error: 'Comments are disabled for this folio.' }, { status: 403 });
@@ -307,7 +315,7 @@ export async function POST(
                   description: `**${newComment.author}:** "${newComment.text}"`,
                   color: isGeneralComment ? 3447003 : 5814783, // Blue for comments, Indigo for pins
                   url: editUrl,
-                  footer: { text: 'LiveFolio Studio Reviews' }
+                  footer: { text: 'LiveFolio Reviews' }
                 };
 
                 const components = [

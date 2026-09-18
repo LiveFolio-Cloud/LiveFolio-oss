@@ -180,6 +180,14 @@ export interface HTMLFile {
    * public. Cloud-only — set by platform moderation, never by folio writes.
    */
   moderationStatus?: 'ok' | 'hidden';
+  /**
+   * Set when the owner archives this folio. Archiving also forces status to
+   * 'draft' and clears the listing, so the existing draft gates hide it
+   * everywhere public; this timestamp is the "Archived" marker the owner UI
+   * groups by. Unarchiving clears it and leaves status at 'draft' — nothing
+   * ever auto-republishes. Archived folios still count toward storage.
+   */
+  archivedAt?: string | null;
 }
 
 /** A user's public profile */
@@ -293,7 +301,7 @@ const DEFAULT_TEMPLATES: HTMLFile[] = [
 <body class="bg-zinc-50 text-zinc-900 min-h-screen flex items-center justify-center p-8">
     <div class="max-w-xl text-center space-y-6">
         <h1 class="text-4xl font-extrabold tracking-tight">Your Living Canvas</h1>
-        <p class="text-zinc-500 leading-relaxed">This is an active, editable HTML folio. Pin comments, modify the layout, and use the AI Studio to build beautiful responsive documents.</p>
+        <p class="text-zinc-500 leading-relaxed">This is an active, editable HTML folio. Pin comments, modify the layout, and use the AI assistant to build beautiful responsive documents.</p>
     </div>
 </body>
 </html>`

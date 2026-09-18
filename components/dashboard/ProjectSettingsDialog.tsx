@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { FolderKanban, Globe, Lock, Loader2, X, Trash2, ExternalLink } from 'lucide-react';
+import { FolderKanban, Globe, Lock, Loader2, X, Trash2, ExternalLink, Archive, ArchiveRestore } from 'lucide-react';
 import { isCloud } from '@/lib/env';
 import type { PaidAccessConfig } from '@/lib/gating/types';
 import { sanitizePaidAccess } from '@/lib/gating/config';
@@ -19,6 +19,8 @@ interface ProjectData {
   /** Custom thumbnail (public storage URL) — undefined when not loaded. */
   thumbnail_url?: string | null;
   organization_id?: string | null;
+  /** Set while the workspace is archived (hides it and every folio inside). */
+  archived_at?: string | null;
 }
 
 interface ProjectSettingsDialogProps {
@@ -46,6 +48,7 @@ export default function ProjectSettingsDialog({
   const [accessError, setAccessError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
 
   useEffect(() => {
     if (isOpen && project) {
@@ -123,6 +126,32 @@ export default function ProjectSettingsDialog({
       onClose();
     } catch {} finally {
       setIsDeleting(false);
+    }
+  };
+
+  /** Archive hides the workspace and unpublished/unlisted every folio in it.
+   *  Nothing is deleted, so the confirm copy leads with what the owner will
+   *  actually notice: the content disappearing from their public page. */
+  const handleArchiveToggle = async () => {
+    if (isArchiving) return;
+    const restoring = !!project?.archived_at;
+    const ok = restoring
+      ? window.confirm(
+          `Restore "${name}"? Its folios come back as drafts — publish them again when you are ready.`
+        )
+      : window.confirm(
+          `Archive "${name}"? Every folio inside is unpublished and hidden from your public page. Nothing is deleted, and you can restore this later.`
+        );
+    if (!ok) return;
+    setIsArchiving(true);
+    try {
+      await fetch(`/api/projects/${project!.id}/${restoring ? 'unarchive' : 'archive'}`, {
+        method: 'POST',
+      });
+      onSaved();
+      onClose();
+    } catch {} finally {
+      setIsArchiving(false);
     }
   };
 
@@ -247,6 +276,24 @@ export default function ProjectSettingsDialog({
 
           {/* Actions */}
           <div className="flex items-center gap-2 pt-1">
+            {/* Archive sits left of Delete, deliberately quieter than it: it
+                is the reversible option and the one we want people to reach
+                for first. */}
+            <button
+              onClick={handleArchiveToggle}
+              disabled={isArchiving}
+              title={project?.archived_at ? 'Restore this workspace' : 'Hide this workspace and its folios'}
+              className="h-9 px-3 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider font-mono text-[#0F0F0D]/60 dark:text-[#F4F4F0]/60 hover:text-[#0F0F0D] dark:hover:text-[#F4F4F0] rounded-lg transition-colors cursor-pointer"
+            >
+              {isArchiving ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : project?.archived_at ? (
+                <ArchiveRestore size={11} />
+              ) : (
+                <Archive size={11} />
+              )}
+              {project?.archived_at ? 'Restore' : 'Archive'}
+            </button>
             <button
               onClick={handleDelete}
               disabled={isDeleting}

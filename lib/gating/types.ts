@@ -37,7 +37,7 @@ export interface PaidAccessConfig {
    * Serve-surface hardening for gated content. 'source_locked' delivers
    * HTML pages through a JS bootstrap + copy friction so view-source /
    * save-as yields a shell. Casual-copier defense — NOT encryption: a
-   * determined thief can still extract rendered content. Studio previews,
+   * determined thief can still extract rendered content. Editor previews,
    * org members and agents always receive full source regardless.
    * Default: 'standard' (no wrapping).
    */

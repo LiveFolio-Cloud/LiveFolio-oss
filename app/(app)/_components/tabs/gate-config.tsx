@@ -483,7 +483,7 @@ export function GateConfig({
             <p className="mt-1 text-[11px] leading-snug text-ink/50">
               Blocks Ctrl&#8209;S, view-source and copying of the live page — it deters casual
               copiers, it is not encryption: a determined thief can still extract rendered
-              content. Studio previews and your team always get full source.
+              content. Editor previews and your team always get full source.
             </p>
           </div>
         </>

@@ -1,16 +1,16 @@
 'use client';
 
 /**
- * Client-side repo unpacking — extracted from app/studio/[id]/StudioClient.tsx
- * (Epic #135, spike Q2).
+ * Client-side repo unpacking — runs in the browser on a user-picked
+ * ZIP archive or a picked directory (Epic #135, spike Q2).
  *
  * Turns a ZIP archive or a picked folder (FileList) into the flat
  * `Record<string, string>` file map that `POST /api/files` `defaultFiles`
- * and the studio save path both expect: text files as strings, images as
+ * and the folio save path both expect: text files as strings, images as
  * base64 data URLs.
  *
  * OSS-safe: no dependencies — JSZip 3.10.1 is script-injected from cdnjs at
- * runtime (matches existing StudioClient behavior; jszip is NOT in package.json).
+ * runtime; jszip is NOT in package.json, it is fetched on demand.
  * Client-only: uses window/document/FileReader. Do not import server-side.
  */
 

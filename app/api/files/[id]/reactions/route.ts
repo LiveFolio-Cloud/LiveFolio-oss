@@ -68,6 +68,10 @@ export async function POST(
       if (!project) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
+      // Archived folios accept no public interactions.
+      if (project.archivedAt) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
 
       const result = await runTransaction(async (db) => {
         const pIndex = db.findIndex((p) => p.id === targetId);
@@ -109,6 +113,10 @@ export async function POST(
     if (fetchError || !current) throw new Error('Project not found');
     const project = transformFolioRecord(current as FolioRecord);
     targetId = project.id;
+
+    if (project.archivedAt) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
 
     project.reactions = {
       ...(project.reactions || {}),

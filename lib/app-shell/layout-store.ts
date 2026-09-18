@@ -27,7 +27,7 @@ import {
   SIDEBAR_MIN,
 } from './columns';
 
-/** Legacy key written by the old v1 UI (studio side) — kept for compat. */
+/** Legacy key written by the old v1 UI — kept for compat. */
 const SIDEBAR_COLLAPSED_KEY = 'LiveFolio_sidebar_collapsed';
 
 function writeCollapsedPref(collapsed: boolean): void {

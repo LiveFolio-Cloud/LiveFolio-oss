@@ -13,6 +13,7 @@ import type { PaidAccessConfig } from '@/lib/gating/types';
 import { sanitizeListing, listingWriteGuard, preserveAttestation, defaultListing } from '@/lib/listing/config';
 import type { ListingMetadata } from '@/lib/listing/types';
 import { nextVersionId, applyVersionRetention } from '@/lib/version-retention';
+import { folioIsArchived } from '@/lib/archive';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -41,7 +42,7 @@ export async function GET(
     // Cloud Mode
     if (!orgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Owner handle rides along so studio menus can build the canonical
+    // Owner handle rides along so editor menus can build the canonical
     // @username/slug link INSTANTLY (identity is cached in-process — this
     // is not a per-open cost).
     const withOwner = async (project: HTMLFile) => {
@@ -163,6 +164,20 @@ export async function PUT(
       thumbnailUrl,
       listing
     } = body;
+
+    // An archived folio cannot be republished in place — it has to come back
+    // out of the archive first, landing as a draft the owner publishes
+    // deliberately. Server-side backstop for the UI hiding publish while
+    // archived, and for agents calling this route directly.
+    if (status === 'published' && (await folioIsArchived(id))) {
+      return NextResponse.json(
+        {
+          error: 'ARCHIVED',
+          message: 'This folio is archived. Unarchive it first — it returns as a draft you can publish.',
+        },
+        { status: 409 }
+      );
+    }
 
     // Resolve effective files and message
     const targetFiles = updated_files || files;

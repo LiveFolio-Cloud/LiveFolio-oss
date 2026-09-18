@@ -6,7 +6,7 @@
  * muted links that turn vermillion on hover. All colors use the v2 explicit
  * hex vocabulary (no scoped brutalist tokens).
  *
- * Hidden on the landing page (`/`, which has its own footer), and on studio
+ * Hidden on the landing page (`/`, which has its own footer), and on editor
  * and share pages to keep the canvas and presentation full-screen.
  */
 "use client";
@@ -40,7 +40,7 @@ export default function Footer() {
 
   // Hide on the landing page (owns its own footer) and all app surfaces —
   // the marketing footer must never appear on dashboard, settings, profiles,
-  // studio, share, auth, or workspace pages.
+  // editor, share, auth, or workspace pages.
   const appSurfaces = [
     '/share',
     '/u/', '/@', '/login', '/register', '/auth', '/admin', '/app',

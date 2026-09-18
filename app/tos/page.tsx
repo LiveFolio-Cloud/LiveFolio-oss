@@ -109,7 +109,7 @@ export default function TosPage() {
           <P>
             LiveFolio is an AI-native publishing platform that allows users to create, version,
             share, and collect feedback on interactive HTML documents (&ldquo;Folios&rdquo;). The
-            Service includes a web-based studio editor, a dashboard for managing folios, an MCP
+            Service includes a web-based folio editor, a dashboard for managing folios, an MCP
             server for AI agent integration, sharing infrastructure, and a public discovery index
             (&ldquo;Explore&rdquo;) where creators may opt to list published folios — some free,
             some offered for sale by their creators.

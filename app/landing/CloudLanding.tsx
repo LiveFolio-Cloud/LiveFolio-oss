@@ -290,7 +290,7 @@ export default function CloudLanding() {
                   <div>
                     <div className="text-base font-bold tracking-tight" style={{ fontFamily: DISPLAY_FONT }}>An audience that comes back</div>
                     <p className="mt-1 text-sm leading-relaxed text-[#0F0F0D]/55 dark:text-[#F4F4F0]/55">
-                      Visitors follow you, react, and pin comments on the exact element they mean — and your follower counts open into real lists, on the page and in the studio.
+                      Visitors follow you, react, and pin comments on the exact element they mean — and your follower counts open into real lists, on the page and in the editor.
                     </p>
                   </div>
                 </li>

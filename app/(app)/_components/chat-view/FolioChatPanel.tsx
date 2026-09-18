@@ -2,11 +2,11 @@
 
 /**
  * Folio-selected mode of the unified ChatView (P2-T01) — the "Chat" tab in
- * `/app/[folioId]`. A fork of `components/studio/ChatPanel.tsx` (read-only
+ * `/app/[folioId]`. A fork of `components/folio/ChatPanel.tsx` (read-only
  * source, ~80 props) re-wired to read the per-folio provider store:
  * `useFolioStore` selectors replace every prop. The streaming AI pipeline,
  * tool orchestration (Epic #96), proposal state and persona/design mirrors
- * live in `lib/app-shell/folio-store.ts` (ported from StudioClient); this
+ * live in `lib/app-shell/folio-store.ts` (ported from the legacy editor); this
  * component is the presentation layer on top of it.
  *
  * What was STRIPPED from the source (the shell owns these):
@@ -17,7 +17,7 @@
  * - the send/clear/proposal/tool handlers — replaced by store actions
  *   (`sendPrompt`, `clearChat`, `commitProposal`, `executeToolCall`,
  *   `updateToolCallStatus`) and thin local wrappers;
- * - the handleSendChatPromptRef — the Studio iframe bridge (P2-T00) calls
+ * - the handleSendChatPromptRef — the FolioView iframe bridge (P2-T00) calls
  *   the store's `sendPrompt` directly.
  *
  * Kept byte-identical: every bubble/toolbar/drawer/portal JSX block from the
@@ -40,16 +40,16 @@ import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { Button } from '@/components/ui/button';
 import { AlertDialog } from '@/components/ui/dialog';
 import { Dropdown } from '@/components/ui/dropdown';
-import ChatMessageRenderer from '@/components/studio/ChatMessageRenderer';
-import ToolCallCard from '@/components/studio/ToolCallCard';
+import ChatMessageRenderer from '@/components/folio/ChatMessageRenderer';
+import ToolCallCard from '@/components/folio/ToolCallCard';
 import { isCloud, isOSS } from '@/lib/env';
 import { useFolioStore } from '../folio-provider/FolioProvider';
 import type { ChatScope } from '@/lib/app-shell/folio-store';
 import { LocalModelKeys } from '@/components/chat/LocalModelKeys';
 
-// Lazy-loaded panels — mount only when the user engages (StudioClient pattern).
-const DesignDrawer = dynamic(() => import('@/components/studio/DesignDrawer'), { ssr: false });
-const AttachmentPortal = dynamic(() => import('@/components/studio/AttachmentPortal'), { ssr: false });
+// Lazy-loaded panels — mount only when the user engages (lazy-mount pattern).
+const DesignDrawer = dynamic(() => import('@/components/folio/DesignDrawer'), { ssr: false });
+const AttachmentPortal = dynamic(() => import('@/components/folio/AttachmentPortal'), { ssr: false });
 
 function getPresetChips(tagName: string): string[] {
    const tag = tagName.toLowerCase();
@@ -60,7 +60,7 @@ function getPresetChips(tagName: string): string[] {
    return ['Modernize this section style', 'Add micro-interactions', 'Convert to glassmorphic design'];
 }
 
-/** Confirm/alert dialog state (v1 StudioClient `alertDialog` shape). */
+/** Confirm/alert dialog state (legacy editor alertDialog shape). */
 interface AlertState {
   isOpen: boolean;
   title: string;
@@ -105,7 +105,7 @@ export function FolioChatPanel() {
   const executeToolCall = useFolioStore((s) => s.executeToolCall);
   const updateToolCallStatus = useFolioStore((s) => s.updateToolCallStatus);
 
-  // ── Component-local UI state (not shared with the Studio tab) ─────────
+  // ── Component-local UI state (not shared with the Editor tab) ─────────
   const [isToolsMenuOpen, setIsToolsMenuOpen] = React.useState(false);
   const toolsBtnRef = React.useRef<HTMLButtonElement>(null);
   const [toolsMenuPos, setToolsMenuPos] = React.useState({ bottom: 0, left: 0 });
@@ -132,7 +132,7 @@ export function FolioChatPanel() {
   const [, setOllamaModels] = React.useState<string[]>([]);
   const [, setOllamaRunning] = React.useState(false);
   const [availableDesignSystems, setAvailableDesignSystems] = React.useState<{ id: string; name: string; description: string; thumbnail: string }[]>([]);
-  // Attachment portal state (v1 StudioClient 256–265)
+  // Attachment portal state
   const [selectedAttachmentFile, setSelectedAttachmentFile] = React.useState<File | null>(null);
   const [extractedContextText, setExtractedContextText] = React.useState('');
   const [isExtractingText, setIsExtractingText] = React.useState(false);
@@ -164,7 +164,7 @@ export function FolioChatPanel() {
     ? Object.keys(latestVersionFiles).filter((k) => k.startsWith('assets/')).length
     : 0;
 
-  // ── Model plumbing (v1 StudioClient 1103–1164 + 1302–1374) ────────────
+  // ── Model plumbing ────────────
   const probeOllama = React.useCallback(async () => {
     try {
       const res = await fetch('/api/onboard');
@@ -453,7 +453,7 @@ export function FolioChatPanel() {
     }
   };
 
-  // ── Attachment portal (v1 StudioClient 2366–2564) ─────────────────────
+  // ── Attachment portal ─────────────────────
   const readTextFile = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();

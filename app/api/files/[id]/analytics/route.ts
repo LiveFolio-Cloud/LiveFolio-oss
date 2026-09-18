@@ -61,6 +61,10 @@ export async function POST(
       if (!project) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
+      // Archived folios take no view beacons.
+      if (project.archivedAt) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
 
       await runTransaction(async (db) => {
         const pIndex = db.findIndex((p) => p.id === targetId);
@@ -93,7 +97,7 @@ export async function POST(
     const lookupFolio = async (idToTry: string) => {
       const { data, error } = await supabaseAdmin
         .from('folios')
-        .select('id, analytics')
+        .select('id, analytics, archived_at')
         .eq('id', idToTry)
         .maybeSingle();
 
@@ -105,7 +109,7 @@ export async function POST(
       if (idToTry !== targetId) {
         const fb = await supabaseAdmin
           .from('folios')
-          .select('id, analytics')
+          .select('id, analytics, archived_at')
           .eq('id', targetId)
           .maybeSingle();
         if (!fb.error && fb.data) {
@@ -118,6 +122,9 @@ export async function POST(
 
     const lookup = await lookupFolio(queryId);
     if (!lookup) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
+    if (lookup.data.archived_at) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 

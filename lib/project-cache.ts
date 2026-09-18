@@ -10,7 +10,7 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL for instant page 
 
 /**
  * Shared in-memory cache for dynamic folio project records.
- * Drastically speeds up asset serving in the Studio iframe by eliminating N+1 DB queries.
+ * Drastically speeds up asset serving in the folio sandbox iframe by eliminating N+1 DB queries.
  * Safe to cache for long durations because writes are proactively invalidated.
  */
 export const projectMemoryCache = {

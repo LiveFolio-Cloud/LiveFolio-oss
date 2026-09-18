@@ -44,7 +44,7 @@ function injectWatermark(html: string): string {
 // references a STATIC file (public/livefolio-pin-bridge.js) rather than
 // inline code: a static file updates independently of any folio version —
 // bridge fixes ship without a folio bump, and it stays cacheable on its
-// own URL. Studio previews never pass lf_pins=1.
+// own URL. Editor previews never pass lf_pins=1.
 const PIN_BRIDGE_TAG = '<script src="/livefolio-pin-bridge.js"></script>';
 
 function injectPinBridge(html: string): string {
@@ -58,7 +58,7 @@ function injectPinBridge(html: string): string {
 // `source_locked` paid folios serve HTML through a JS bootstrap shell that
 // holds a short-TTL token and fetches the real page in a second request.
 // View-source / Ctrl+S of the public share then yields only this shell.
-// Members (studio) and agents never hit it — the wrap path is restricted
+// Members (the editor) and agents never hit it — the wrap path is restricted
 // to public-share requests and exempts org members via session check.
 
 function buildSourceLockShell(token: string): string {
@@ -89,7 +89,7 @@ function buildSourceLockShell(token: string): string {
 </html>`;
 }
 
-/** Copy friction injected into token-served payload HTML (never in studio). */
+/** Copy friction injected into token-served payload HTML (never in the editor). */
 const SOURCE_LOCK_FRICTION = `<style>
 html, body { -webkit-user-select: none; user-select: none; }
 input, textarea, [contenteditable] { -webkit-user-select: text; user-select: text; }
@@ -122,14 +122,14 @@ function injectSourceLockFriction(html: string): string {
   return html + SOURCE_LOCK_FRICTION;
 }
 
-/** Guest share (public viewer) vs Studio/member request.
+/** Guest share (public viewer) vs editor/member request.
  *
  * Security: this used to read the client-sent `Referer` header
- * (`Referer: …/studio/…` → treated as Studio). Referer is spoofable — any
+ * (`Referer: …/studio/…` → treated as the editor). Referer is spoofable — any
  * anonymous caller could strip the Free-plan watermark or, on source-locked
  * folios, skip the wrapping shell and receive the real HTML. The decision is
  * now session-based: Cloud resolves org membership from the session cookie +
- * DB (unforgeable); OSS has no members, so the local Studio host stands in
+ * DB (unforgeable); OSS has no members, so the local host stands in
  * (unchanged local-first behavior). */
 async function isGuestShare(request: Request, project: HTMLFile): Promise<boolean> {
   const host = request.headers.get('host') || '';
@@ -163,7 +163,7 @@ async function isFreePlan(project: HTMLFile): Promise<boolean> {
 }
 
 // ── Historical-version gate (content protection) ─────────────────────
-// The raw route serves ?v=<versionId> pins so the studio and share pages
+// The raw route serves ?v=<versionId> pins so the editor and share pages
 // can rehydrate an exact snapshot (comment/pin anchors). Blindly
 // enumerable, those same URLs hand scrapers the folio's FULL edit
 // history — content the author later removed or replaced keeps serving.
@@ -198,7 +198,7 @@ async function resolveSessionUser(): Promise<{ id: string } | null> {
 
 // Membership decisions on the public share path must not hammer the DB per
 // request; org memberships change rarely, so a 5-minute in-memory cache is
-// safe (worst case: a new member waits one window before Studio gets the
+// safe (worst case: a new member waits one window before the editor gets the
 // no-watermark/no-wrap treatment).
 const _membershipCache = new Map<string, { member: boolean; expiresAt: number }>();
 
@@ -390,20 +390,20 @@ export async function GET(
     }
 
     // Draft/takedown gate — block raw file access for unpublished or
-    // moderated-down folios unless the viewer is an org member (studio
+    // moderated-down folios unless the viewer is an org member (editor
     // preview). `moderation_status = 'hidden'` is a platform takedown:
     // identical to draft for the public, but members keep edit access.
     const takenDown = project.moderationStatus === 'hidden';
     if (project.status === 'draft' || takenDown) {
       const host = request.headers.get('host');
       if (isOSS) {
-        // OSS: allow localhost (studio preview), block external. Takedowns
+        // OSS: allow localhost (editor preview), block external. Takedowns
         // cannot exist in OSS (no platform moderation) — draft wording only.
         if (!isLocalHost(host)) {
           return new Response('This folio has not been published yet.', { status: 404 });
         }
       } else {
-        // Cloud: allow authenticated org members (studio preview), block others
+        // Cloud: allow authenticated org members (editor preview), block others
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
         const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
         const cookieStore = await cookies();
@@ -452,7 +452,7 @@ export async function GET(
 <body>
     <div class="box">
         <h1>Private Folio</h1>
-        <p>This folio's public link is currently disabled. Toggle "Enable Public Link" inside the LiveFolio Studio to make it accessible online.</p>
+        <p>This folio's public link is currently disabled. Toggle "Enable Public Link" inside the folio editor to make it accessible online.</p>
     </div>
 </body>
 </html>`,
@@ -522,7 +522,7 @@ export async function GET(
     let gateViewerGranted = false;
     let gateViewerId: string | null = null;
     // Private folios only ever serve access-key holders or org members —
-    // bearer/studio content must never be cached by shared caches or CDNs
+    // bearer/editor content must never be cached by shared caches or CDNs
     // (previously a keyed ?v= request fell through to `public, immutable`
     // and outlived the folio's privacy by up to a year).
     if (project.isPrivate) forceNoStore = true;
@@ -712,7 +712,7 @@ export async function GET(
     //   payload — a valid token arrived: serve the REAL page below (with
     //             friction injected), never cached.
     //   deny    — a bogus/expired token: 403.
-    //   null    — not source_locked, studio/member request, or secret
+    //   null    — not source_locked, editor/member request, or secret
     //             unconfigured (fail open): serve normally.
     const sourceLockFlow = async (
       servedFile: string
@@ -728,8 +728,8 @@ export async function GET(
         forceNoStore = true;
         return { kind: 'payload' };
       }
-      // Studio previews are never wrapped; neither are org members (they
-      // reach the studio, which always fetches full source). Session-based —
+      // Editor previews are never wrapped; neither are org members (they
+      // reach the editor, which always fetches full source). Session-based —
       // the old Referer check let an anonymous caller spoof a /studio/
       // referer and receive the real HTML unwrapped.
       if (!(await isGuestShare(request, project))) return null;
@@ -936,7 +936,7 @@ export async function GET(
     if (shouldWatermark) {
       code = injectWatermark(code);
     }
-    // Token-served payloads carry the copy-friction layer (never in studio).
+    // Token-served payloads carry the copy-friction layer (never in the editor).
     if (lock?.kind === 'payload') {
       code = injectSourceLockFriction(code);
     }
