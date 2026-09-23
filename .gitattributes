@@ -1,0 +1,39 @@
+# Enforce LF line endings for all text files.
+# Prevents CRLF corruption on Windows clones that would break .split('\n') calls.
+* text=auto eol=lf
+
+# Shell scripts MUST use LF (bash can't parse CRLF)
+*.sh text eol=lf
+
+# Python scripts
+*.py text eol=lf
+
+# JavaScript/TypeScript
+*.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.jsx text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+
+# Config files
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# Binary files (no line-ending conversion)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.lock binary

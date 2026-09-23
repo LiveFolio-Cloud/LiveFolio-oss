@@ -1,0 +1,23 @@
+/**
+ * `/app/[folioId]` — a folio is selected. Renders the tab container
+ * inside the AppShellFrame center slot: per-folio provider +
+ * role="tablist" bar + keep-alive Editor/Chat panels. The provider fetches
+ * `/api/files/[id]` on mount.
+ * force-dynamic mirrors the folio route's rendering mode (the fetch happens
+ * client-side through the provider).
+ */
+import { FolioTabs } from '../../_components/tabs/FolioTabs';
+
+export const dynamic = 'force-dynamic';
+export const dynamicParams = true;
+export const revalidate = 0;
+
+export default async function FolioPage({
+  params,
+}: {
+  params: Promise<{ folioId: string }>;
+}) {
+  const { folioId } = await params;
+
+  return <FolioTabs folioId={folioId} />;
+}
