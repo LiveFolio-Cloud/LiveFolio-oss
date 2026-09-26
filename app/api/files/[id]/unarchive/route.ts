@@ -1,4 +1,5 @@
 import { createFolioArchiveRoute } from '@/lib/api/archive-route';
+import { gateFolioArchive } from '../../_lib/role-gate';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -13,5 +14,18 @@ export const revalidate = 0;
  *
  * The handler itself is shared with the archive route — see
  * lib/api/archive-route.ts for the guard and envelope.
+ *
+ * OWNER ONLY — the same wrapper, and the same reason, as
+ * app/api/files/[id]/archive/route.ts.
  */
-export const POST = createFolioArchiveRoute('unarchive');
+
+const unarchive = createFolioArchiveRoute('unarchive');
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const denial = await gateFolioArchive(context);
+  if (denial) return denial;
+  return unarchive(request, context);
+}

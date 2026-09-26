@@ -71,7 +71,7 @@ import {
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useInboxUnread } from '@/hooks/use-inbox-unread';
-import { splitWorkspacesByOwnership } from '@/lib/app-shell/workspace-ownership';
+import { splitWorkspacesByOwnership, splitFoliosByGrant } from '@/lib/app-shell/workspace-ownership';
 import MoveToProjectDialog from '@/components/dashboard/MoveToProjectDialog';
 import ProjectSettingsDialog from '@/components/dashboard/ProjectSettingsDialog';
 import ThemeToggle from '@/components/ui/theme-toggle';
@@ -105,6 +105,9 @@ interface FolioData {
   listing?: ListingMetadata | null;
   /** Set while the folio is archived — moves the row into the Archived group. */
   archivedAt?: string | null;
+  /** The caller's grant role on this folio (viewer/commenter/editor);
+   *  'owner' for org folios. The "Shared folios" split reads this tag. */
+  accessRole?: string | null;
 }
 
 interface WorkspaceData {
@@ -589,7 +592,19 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
   );
   const liveWorkspaces = workspaces.filter((w) => !w.archived_at);
 
-  const unfiledFolios = liveFolios.filter((f) => !f.projectId);
+  // Folio grants are permission-bearing, unlike the workspace split above:
+  // The list union tags granted rows with `accessRole`, and a granted folio's
+  // projectId is the OWNER's workspace — the accordion tree here would hide
+  // it entirely (no matching workspace, not "unfiled"). Grant recipients
+  // render in their own flat "Shared folios" group instead (see below), so
+  // the org tree below works from the caller's own folios only. No viewer id
+  // (OSS, or profile still in flight) means no split — same one-request rule
+  // as the workspace split.
+  const folioOwnership = splitFoliosByGrant(liveFolios, isCloud ? myUserId : null);
+  const myLiveFolios = folioOwnership.mine;
+  const grantedFolios = folioOwnership.shared;
+
+  const unfiledFolios = myLiveFolios.filter((f) => !f.projectId);
   const hasSearch = q.length > 0;
 
   // ── Mine vs shared with me ──────────────────────────────────────────
@@ -609,7 +624,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
   // search active, groups with no matching folios render as null, and a
   // stranded "Shared with me" heading over empty space is worse than no split.
   const visibleShared = sharedWorkspaces.filter(
-    (w) => !hasSearch || liveFolios.some((f) => f.projectId === w.id),
+    (w) => !hasSearch || myLiveFolios.some((f) => f.projectId === w.id),
   );
   const hasShared = visibleShared.length > 0;
 
@@ -631,7 +646,7 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
    * affordances, same counts. A second copy of this markup would drift.
    */
   const renderWorkspaceGroup = (w: WorkspaceData) => {
-    const workspaceFolios = liveFolios.filter((f) => f.projectId === w.id);
+    const workspaceFolios = myLiveFolios.filter((f) => f.projectId === w.id);
     // With a search active, hide groups with no matches.
     if (hasSearch && workspaceFolios.length === 0) return null;
     const isOpen = expandedWorkspaces.has(w.id);
@@ -1212,12 +1227,12 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
               <div className="px-2.5 py-2 text-center">
                 <Loader2 size={12} className="animate-spin mx-auto text-ink/20" />
               </div>
-            ) : liveFolios.length === 0 ? (
+            ) : myLiveFolios.length === 0 ? (
               <p className="px-2.5 py-1 text-sm font-medium text-ink/45 ">
                 {hasSearch ? 'No folios match your search' : 'No folios yet — create one above'}
               </p>
             ) : (
-              liveFolios.map((f) => (
+              myLiveFolios.map((f) => (
                 <FolioItem
                   key={f.id}
                   folio={f}
@@ -1314,6 +1329,32 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
                 ))}
               </div>
             )}
+          </>
+        )}
+
+        {/* Shared folios — grants the caller holds. Rendered as a
+            flat library, not a workspace accordion: a granted folio's
+            projectId belongs to the OWNER's workspace, which this sidebar
+            cannot render. The workspace group above keeps its own "Shared
+            with me" heading; this one says what it is. Rows are not drag
+            targets — the owner-side API refuses workspace moves for a grantee,
+            and the UI should not offer a control the role cannot use. The ⋯
+            menu stays: open/version actions vary by role and the server is
+            the authority. */}
+        {isCloud && grantedFolios.length > 0 && (
+          <>
+            <div className={sectionLabel}>Shared folios</div>
+            {grantedFolios.map((f) => (
+              <FolioItem
+                key={f.id}
+                folio={f}
+                pathname={pathname}
+                onOpenMenu={openFolioMenu}
+                isDragging={false}
+                onDragStart={() => {}}
+                onDragEnd={() => {}}
+              />
+            ))}
           </>
         )}
 
@@ -1594,6 +1635,21 @@ function FolioItem({
         <PaidIndicator config={folio.paidAccess} />
         <ListedIndicator listing={folio.listing} />
         <span className="truncate flex-1">{folio.title || 'Untitled'}</span>
+        {/* Grant role badge — a viewer should discover their limits by reading
+            the row, not by clicking. Org rows carry 'owner' and show
+            nothing. */}
+        {folio.accessRole && folio.accessRole !== 'owner' && (
+          <span
+            className={cn(
+              'shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide',
+              folio.accessRole === 'editor'
+                ? 'bg-[var(--app-accent)]/10 text-[var(--app-accent)]'
+                : 'bg-[#0F0F0D]/5 text-ink/50 dark:bg-[#F4F4F0]/10'
+            )}
+          >
+            {folio.accessRole}
+          </span>
+        )}
         {/* Publish state — rendered in BOTH states. Previously only drafts got
             a mark (a 6px dot at 25% opacity, all but invisible), which left
             published folios unmarked: "live" and "no indicator" looked

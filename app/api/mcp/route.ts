@@ -13,6 +13,7 @@ import { handleGetSharingStatus, handleToggleSharingTunnel, handleSetFolioPublic
 import { handleManagePaidAccess, handleManageListing, handleSearchMarketplace, handleBuyProject, handleGetPurchases, handleManageSellerAccount, MARKETPLACE_TOOLS, MARKETPLACE_INSTRUCTION_LINES } from '@/lib/mcp/tools/marketplace';
 import { handleListWorkspaces, handleManageWorkspace, handleManageMember } from '@/lib/mcp/tools/workspace';
 import { handleManageProfile, handleClaimHandle, handleFollowProfile, handleGetPublicProfile } from '@/lib/mcp/tools/social';
+import { COLLABORATOR_TOOL_HANDLERS, COLLABORATOR_TOOLS, COLLABORATOR_INSTRUCTION_LINES } from '@/lib/mcp/tools/collaborators';
 
 /** Hard bound on concurrent SSE streams held in memory (per server process). */
 const SSE_SESSION_MAX = 500;
@@ -625,6 +626,13 @@ const TOOLS: Array<{ name: string; description: string; inputSchema: Record<stri
       // this route file ships. Spread at this exact position so registry
       // order is unchanged; the self-hosted tree gets an empty array.
       ...MARKETPLACE_TOOLS,
+      // Collaborator tool definitions live in lib/mcp/tools/collaborators.ts.
+      // They share the marketplace module's shape: the handlers ship in both
+      // trees and each one opens with its own self-hosted guard, so the
+      // advertised set is the only thing that is cloud-gated — spread here,
+      // inside the same block, rather than a second `if (!isOSS)`, so registry
+      // order stays stable and a self-hosted build is never told about them.
+      ...COLLABORATOR_TOOLS,
       {
         name: "list_workspaces",
         description: "List the workspace folders that organize folios, with id, name, slug, is_public, folio_count, and an `archived` flag. Archived workspaces are omitted by default — pass include_archived:true to see them too. Use these IDs to organize folios via manage_workspace.",
@@ -818,6 +826,13 @@ export async function POST(request: Request) {
             // A runtime isOSS guard cannot hide a string from a bundle, so they
             // must be physically absent from this file.
             ...MARKETPLACE_INSTRUCTION_LINES,
+            // Collaborator capability rows live in the same module as the
+            // tools they describe, so the map cannot advertise a tool the
+            // dispatcher does not have. The module names no plan tier and no
+            // price — the seat refusal an agent may hit is carried verbatim
+            // from the shared seating helper, which is what already carries
+            // the packaging language and is swapped for a self-hosted build.
+            ...COLLABORATOR_INSTRUCTION_LINES,
             "FOLIOS: list_projects (include_archived:true to see archived) · get_project (includes visibility + analytics) · create_project (html/mode/design) · update_project (files/title/description — versioned) · delete_project (confirmed:true) · duplicate_project · archive_folio / unarchive_folio (unarchive returns a DRAFT — never auto-republished; an archived folio is unpublished, unlisted, and hidden everywhere public, but still counts toward storage).",
             "FEEDBACK: get_curated_brief · get_active_design_system · add_comment (pins with x/y/selector) · moderate_comment (resolve|reopen|delete) · add_reaction (👍 ❤️ 💡 🔥).",
             "WORKSPACE: list_workspaces (include_archived:true to see archived) · manage_workspace (create|update|delete|add_folio|archive|unarchive) · manage_member (no action = list; invite|update_role|remove).",
@@ -942,6 +957,12 @@ const TOOL_HANDLERS = new Map<string, ToolHandler>([
   ['list_workspaces', handleListWorkspaces],
   ['manage_workspace', handleManageWorkspace],
   ['manage_member', handleManageMember],
+  // Granted-folio tools. Registered unconditionally (a raw call to a name the
+  // caller was never advertised gets each handler's own self-hosted guard),
+  // advertised only inside the cloud block of `TOOLS`, so both entry points —
+  // `tools/call` and the direct RPC aliases — reach them. The table itself
+  // lives with the handlers so this route names none of the tools.
+  ...COLLABORATOR_TOOL_HANDLERS,
   ['manage_profile', handleManageProfile],
   ['claim_handle', handleClaimHandle],
   ['follow_profile', handleFollowProfile],

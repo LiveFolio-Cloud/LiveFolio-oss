@@ -11,13 +11,14 @@ import { sanitizeListing, listingWriteGuard, listingWriteGuardResponse } from '@
 import type { ListingMetadata } from '@/lib/listing/types';
 import { slugifyFolioTitle } from '@/lib/folio-slug';
 import { err } from '@/lib/api/respond';
+import { listGrantedFolios, type GrantRole } from './_lib/role-gate';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request: Request) {
   try {
-    const { orgId } = await getAuthContext();
+    const { orgId, userId } = await getAuthContext();
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get('project_id');
 
@@ -48,60 +49,128 @@ export async function GET(request: Request) {
       });
     }
 
-    // Cloud Mode - Scoped to Org
+    // Cloud Mode — the caller's own org, UNIONED with folios granted to them
+    // personally (ARCHITECTURE.html §5 seam 1).
     if (!supabaseAdmin) {
-      return NextResponse.json({ 
+      return NextResponse.json({
         error: 'Supabase client is not initialized.',
         message: 'Please make sure that NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in your local .env file when running in cloud/SaaS mode.'
       }, { status: 500 });
     }
 
-    if (!orgId) return err('Unauthorized', { status: 401 });
+    // Identity, not org membership, is what this route needs: a collaborator
+    // may hold a grant while belonging to no organization at all, and an org
+    // member always has both. (The previous guard was `!orgId`, which refused
+    // the very caller the grant exists for.)
+    if (!userId) return err('Unauthorized', { status: 401 });
 
-    const { data: initialData, error } = await supabaseAdmin
-      .from('folios_metadata')
-      .select('*')
-      .eq('organization_id', orgId)
-      .order('updated_at', { ascending: false });
-    let data = initialData;
+    // The caller's live grants, read once (`active`, unexpired — a pending or
+    // revoked row is deliberately not access). Cheap: one indexed partial-index
+    // read keyed on user_id, and the join to the folios themselves is the
+    // `.in()` query below rather than a fetch-everything-and-filter in JS.
+    const grants = await listGrantedFolios(userId);
+    const grantedRoleById = new Map<string, GrantRole>(
+      grants.map((entry) => [entry.folio_id, entry.role])
+    );
 
-    if (error) throw error;
-
-    // Self-healing: if metadata view is empty, check for orphaned folios
-    // that belong to this org directly in the folios table (not the view).
-    // IMPORTANT: Only reassign folios with a genuinely invalid org_id
-    // (NULL or non-existent org), NOT folios that simply belong to another
-    // valid organization. The previous logic was reassigning other orgs'
-    // folios on every empty-workspace load.
-    if (!data || data.length === 0) {
-      const { data: rawFolios, error: rawErr } = await supabaseAdmin
-        .from('folios')
-        .select('id, organization_id')
+    // Org folios. The query is scoped to the org the caller ACTUALLY belongs
+    // to — `orgId` is re-derived from the memberships table by
+    // `getAuthContext`, never trusted raw from the header.
+    let orgRows: FolioRecord[] = [];
+    if (orgId) {
+      const { data: initialData, error } = await supabaseAdmin
+        .from('folios_metadata')
+        .select('*')
         .eq('organization_id', orgId)
-        .order('updated_at', { ascending: false })
-        .limit(50);
+        .order('updated_at', { ascending: false });
+      orgRows = (initialData as FolioRecord[]) || [];
 
-      if (!rawErr && rawFolios && rawFolios.length > 0) {
-        // Folios exist for this org but the metadata view didn't pick them up.
-        // Just use the raw query results — no reassignment needed.
-        const { data: refreshed, error: refreshErr } = await supabaseAdmin
+      if (error) throw error;
+
+      // Self-healing: if metadata view is empty, check for orphaned folios
+      // that belong to this org directly in the folios table (not the view).
+      // IMPORTANT: Only reassign folios with a genuinely invalid org_id
+      // (NULL or non-existent org), NOT folios that simply belong to another
+      // valid organization. The previous logic was reassigning other orgs'
+      // folios on every empty-workspace load.
+      if (orgRows.length === 0) {
+        const { data: rawFolios, error: rawErr } = await supabaseAdmin
           .from('folios')
-          .select('*')
+          .select('id, organization_id')
           .eq('organization_id', orgId)
-          .order('updated_at', { ascending: false });
-        if (!refreshErr && refreshed) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped Supabase folio rows (select *)
-          data = refreshed.map((f: any) => ({
-            ...f,
-            updated_at: f.updated_at || f.updatedAt,
-            created_at: f.created_at || f.createdAt,
-          }));
+          .order('updated_at', { ascending: false })
+          .limit(50);
+
+        if (!rawErr && rawFolios && rawFolios.length > 0) {
+          // Folios exist for this org but the metadata view didn't pick them up.
+          // Just use the raw query results — no reassignment needed.
+          const { data: refreshed, error: refreshErr } = await supabaseAdmin
+            .from('folios')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('updated_at', { ascending: false });
+          if (!refreshErr && refreshed) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped Supabase folio rows (select *)
+            orgRows = refreshed.map((f: any) => ({
+              ...f,
+              updated_at: f.updated_at || f.updatedAt,
+              created_at: f.created_at || f.createdAt,
+            }));
+          }
+          console.log(`[Self-Heal List] Found ${rawFolios.length} folios for org ${orgId} not in metadata view`);
         }
-        console.log(`[Self-Heal List] Found ${rawFolios.length} folios for org ${orgId} not in metadata view`);
       }
     }
 
-    return NextResponse.json((data as FolioRecord[]).map(transformFolioRecord));
+    // Granted folios the org read did not already cover. The metadata view is
+    // asked for exactly the granted ids: it carries no grant columns of its own
+    // (ARCHITECTURE.html §5), so the union is built here from the id set.
+    let grantedRows: FolioRecord[] = [];
+    if (grantedRoleById.size > 0) {
+      const { data: grantedData, error: grantedErr } = await supabaseAdmin
+        .from('folios_metadata')
+        .select('*')
+        .in('id', Array.from(grantedRoleById.keys()));
+
+      if (grantedErr) throw grantedErr;
+      grantedRows = (grantedData as FolioRecord[]) || [];
+    }
+
+    // De-duplicate on `id`, and let the ORG row win — invariant 1: a member
+    // who also holds a grant must not be demoted to the grant's role, and must
+    // appear exactly once. Everything else about an org row is unchanged.
+    const orgIds = new Set(orgRows.map((row) => row.id));
+    const rows = [
+      ...orgRows.map((row) => ({ row, accessRole: 'owner' as const })),
+      ...grantedRows
+        .filter((row) => !orgIds.has(row.id))
+        .map((row) => ({
+          row,
+          // Present by construction: the id set came from `grantedRoleById`.
+          accessRole: grantedRoleById.get(row.id) as GrantRole,
+        })),
+    ];
+
+    const payload = rows.map(({ row, accessRole }) => ({
+      ...transformFolioRecord(row),
+      // The caller's effective role for THIS row: `owner` (org membership) or
+      // the grant's role. The sidebar files a row under "Shared with me" when this
+      // is one of the three grant roles, and leaves anything else — including a
+      // payload without the field, e.g. from an older client or OSS — in the
+      // org list.
+      accessRole,
+      // Invariant 5: the retired email array is an owner-side record. It rides
+      // in the view's row, so a granted reader would otherwise be handed the
+      // addresses of everyone else on the folio. Owners keep today's payload.
+      ...(accessRole === 'owner' ? {} : { collaborators: [] as string[] }),
+    }));
+
+    // The org query is ordered by `updated_at` desc; the union has to re-apply
+    // that order or granted rows would all sink to the bottom of the sidebar.
+    // ISO-8601 strings compare lexicographically, which is the same total order.
+    payload.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+
+    return NextResponse.json(payload);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- catch-all handler: err may be any thrown value; err.message is read
   } catch (error: any) {
     return err(error.message || 'Failed to list projects.', { status: 500 });
@@ -116,7 +185,6 @@ export async function POST(request: Request) {
       title,
       description,
       isPrivate,
-      collaborators,
       defaultFiles,
       initial_html,
       accessKey,
@@ -208,7 +276,13 @@ export async function POST(request: Request) {
       accessKey: accessKey || undefined,
       allowComments: !!allowComments,
       presentationModeOnly: !!presentationModeOnly,
-      collaborators: isOSS ? [] : (collaborators || []),
+      // Retired write path (ARCHITECTURE.html §5 seam N-C). A creation payload
+      // may still carry `collaborators` — the old share UI sends it — and it is
+      // ignored on purpose: access comes from the granted-access records, which
+      // only the invite API writes (`canWriteField` refuses the column to every
+      // role, owner included). The dead JSONB column is left empty, never
+      // populated with emails that grant nothing.
+      collaborators: [],
       comments: [],
       status: body.status || 'draft',
       projectMode: body.projectMode || 'deck',

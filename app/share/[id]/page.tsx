@@ -147,13 +147,20 @@ export default async function Page({
     .join('&');
   const withQuery = (path: string) => (queryString ? `${path}?${queryString}` : path);
 
-  // SSR gate state: minimal (owner check + accent); the client reconciles
-  // grants/preview standing via the public route on mount.
+  // SSR gate state: the viewer's resolved standing (org member → 'owner', a
+  // folio grant → 'collaborator') plus the accent; the client reconciles
+  // purchase grants and the precise preview standing via the public route on
+  // mount.
   const gateState = await computeShareGate({
+    id: project.id,
     paidAccess: project.paidAccess,
     projectId: project.projectId,
     organization_id: project.organization_id,
   });
+  // The collaborator standing, as the page needs it: this page applies
+  // its OWN draft gate below, so a branch added to computeShareGate alone would
+  // still land the collaborator on "Not Published".
+  const collaboratorStanding = gateState.viewerAccess === 'collaborator';
 
   // Redirect to new @username/folio-slug format if possible
   if (project.slug && !isOSS) {
@@ -188,9 +195,17 @@ export default async function Page({
     redirect(withQuery(`/share/${canonicalSlug}`));
   }
 
-  // Draft gate — only the owner can preview. Everyone else sees "Not Published".
+  // Draft gate — an unpublished folio is not public, and everyone without
+  // standing on it sees "Not Published". One exception: a
+  // collaborator (role ≥ viewer), whose grant the owner issued deliberately.
+  //
+  // Not extended to an ARCHIVED folio, deliberately: archiving forces
+  // status='draft', so an archived folio arrives here looking exactly like a
+  // draft, and a grant never un-archives. `archivedAt` keeps the archived case
+  // on the pre-collaborator answer for every viewer.
   const isDraft = project.status === 'draft';
-  if (isDraft) {
+  const collaboratorSeesDraft = collaboratorStanding && !project.archivedAt;
+  if (isDraft && !collaboratorSeesDraft) {
     return (
       <ShareGate
         kind="STATUS · DRAFT"
@@ -235,8 +250,11 @@ export default async function Page({
   const latestVersion = project.versions[project.versions.length - 1];
   const isPrivate = !!project.isPrivate;
   // Private folios: withhold comments/reactions/file lists — the guest must
-  // prove the access key client-side before content is revealed.
-  const hasContentAccess = !isPrivate;
+  // prove the access key client-side before content is revealed. A collaborator
+  // never sends a key (the grant IS the key), so they stand where a
+  // proven key holder stands — which is what /api/files/[id]/public reports for
+  // both ('owner' there, 'collaborator' here — same reach, different chrome).
+  const hasContentAccess = !isPrivate || collaboratorStanding;
   const initialData = {
     id: project.id,
     title: project.title,
@@ -246,6 +264,10 @@ export default async function Page({
     presentationModeOnly: !!project.presentationModeOnly,
     hasAccessKey: !!project.accessKey,
     status: project.status || 'published',
+    // Honest publish state. The client's own draft screen consults the
+    // `viewerAccess` standing alongside this flag, so a collaborator
+    // admitted by the gate above keeps rendering the folio instead of meeting a
+    // second "Not Published" screen on the client.
     draft: isDraft,
     latestVersionId: latestVersion?.versionId,
     activeFileList: hasContentAccess ? Object.keys(latestVersion?.files || {}) : [],

@@ -177,6 +177,52 @@ export async function sendWelcomeEmail(params: {
   return dispatch({ to: params.to, subject, text, html: emailWrapper('Welcome to LiveFolio', `Welcome, ${userName}!`, body), label: 'Welcome' });
 }
 
+/** Display label for a collaborator role: `editor` reads better as `Editor`. */
+function roleLabel(role: string): string {
+  const value = (role || '').trim();
+  if (!value) return 'Collaborator';
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+/**
+ * Folio collaborator invite — sent when an owner gives one email access to one
+ * folio.
+ *
+ * The CTA carries the invite TOKEN, deliberately not the folio's share link.
+ * The recipient usually has no account yet, and the folio may be an unpublished
+ * draft, private, or paywalled — a share link would dead-end them at a gate they
+ * were never handed a key for, and would grant them nothing even if it opened.
+ * Accepting with the token is what proves possession of the mailbox; the token
+ * is the only credential the accept path may match on, never the address alone.
+ *
+ * Takes primitives and imports no collaborator types: this module ships to the
+ * self-hosted distribution, where that vocabulary does not exist.
+ */
+export async function sendCollaboratorInviteEmail(params: {
+  to: string;
+  folioTitle: string;
+  inviterName: string;
+  /** `viewer` | `commenter` | `editor` — displayed, never interpreted. */
+  role: string;
+  inviteUrl: string;
+  expiresInDays?: number;
+}): Promise<{ success: boolean; provider: 'resend' | 'console' }> {
+  const folioTitle = escapeHtml(params.folioTitle);
+  const inviterName = escapeHtml(params.inviterName);
+  const role = escapeHtml(roleLabel(params.role));
+  const inviteUrl = escapeHtml(params.inviteUrl);
+  const days = params.expiresInDays ?? 7;
+  const subject = `📄 ${inviterName} invited you to collaborate on ${folioTitle}`;
+  const text = `Hello,\n\n${inviterName} gave you access to "${params.folioTitle}" on LiveFolio as a ${roleLabel(params.role)}.\n\nAccept: ${params.inviteUrl}\n\nThis link works once and expires in ${days} days. If you don't know ${inviterName}, you can safely ignore this email.\n\n— The LiveFolio Team`;
+  const body = `<tr><td style="padding:0 36px 16px 36px"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#F4F4F0;border-radius:12px"><tr><td style="padding:22px;text-align:center"><p style="font-family:'Space Grotesk',system-ui,sans-serif;font-size:18px;font-weight:700;color:#0F0F0D;margin:0 0 6px 0;letter-spacing:-0.02em">${folioTitle}</p><p style="font-size:12px;color:#8A8A85;margin:0">Interactive HTML document · Shared on LiveFolio</p></td></tr></table></td></tr>
+<tr><td style="padding:0 36px 16px 36px"><p style="font-size:14px;line-height:1.6;color:#5A5A56;margin:0;text-align:center"><strong style="color:#0F0F0D">${inviterName}</strong> has given you access to this folio.</p></td></tr>
+<tr><td style="padding:0 36px 24px 36px;text-align:center"><span style="display:inline-block;background-color:#FF3B000D;color:#FF3B00;font-family:'Space Grotesk',system-ui,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.04em;padding:6px 14px;border-radius:999px">${role}</span></td></tr>
+<tr><td style="padding:0 36px 24px 36px">${ctaButton('Accept Invitation', inviteUrl)}</td></tr>
+<tr><td style="padding:0 36px 16px 36px;text-align:center"><p style="font-size:11px;color:#8A8A85;margin:0">Or: <span style="color:#FF3B00;word-break:break-all">${inviteUrl}</span></p></td></tr>
+<tr><td style="padding:0 36px 8px 36px"><p style="font-size:11px;color:#8A8A85;text-align:center;margin:0">Single-use link — expires in ${days} days. Invitation sent by ${inviterName}.</p></td></tr>`;
+  return dispatch({ to: params.to, subject, text, html: emailWrapper(`${folioTitle} — Shared with you on LiveFolio`, "You've Been Given Access", body), label: 'Collaborator Invite' });
+}
+
 /** Share notification — sent when a user shares a folio via email. */
 export async function sendShareNotification(params: {
   to: string; folioTitle: string; sharedByName: string; folioUrl: string; message?: string;

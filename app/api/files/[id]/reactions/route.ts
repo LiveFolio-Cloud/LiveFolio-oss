@@ -8,6 +8,9 @@ import { extractUUIDFromSlug } from '@/lib/utils';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { err } from '@/lib/api/respond';
 import { resolveByHyphenSuffix } from '@/lib/api/folio-id';
+import { safeEqual } from '@/lib/crypto';
+import { can, resolveFolioRole } from '../../_lib/role-gate';
+import { roleTargetOf } from '../../_lib/role-gate';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -26,7 +29,7 @@ export async function POST(
     // Cloud: reacting requires a signed-in user — all review interactions on
     // shared folios are account-gated (pins, discussion, reactions). OSS
     // resolves a local identity, so it stays anonymous-friendly.
-    const { email } = await getAuthContext();
+    const { email, userId } = await getAuthContext();
     if (!isOSS && !email) {
       return err('Sign in required to react.', { status: 401 });
     }
@@ -114,6 +117,38 @@ export async function POST(
 
     if (project.archivedAt) {
       return err('Project not found', { status: 404 });
+    }
+
+    // Gated folios need a credential (this route previously had NO
+    // gate at all: any signed-in caller who knew an id could write reactions
+    // to any folio, private or draft). Public published folios keep today's
+    // rule: any signed-in user may react.
+    if (project.status === 'draft' || project.isPrivate) {
+      // A valid access key is a credential in its own right — a key-holder
+      // keeps reacting exactly as before (the client sends the key with the
+      // reactions POST, mirroring the comments POST).
+      let keyOk = false;
+      if (project.isPrivate) {
+        const accessKeyParam = ((body.accessKey as string) || '').trim();
+        const serverKey = (project.accessKey || '').trim();
+        keyOk = !!serverKey && !!accessKeyParam && safeEqual(accessKeyParam, serverKey);
+      }
+      if (!keyOk) {
+        const role = await resolveFolioRole(userId, roleTargetOf(project));
+        if (role === 'none' || role === 'anonymous') {
+          if (project.status === 'draft') {
+            // A draft must not confirm its own existence to a passer-by.
+            return err('Project not found', { status: 404 });
+          }
+          return err('Access Denied: Invalid access key.', { status: 403 });
+        }
+        // Reactions are not comments: a viewer collaborator may react
+        // (ARCHITECTURE.html §3, user-confirmed). `can` here is defensive —
+        // every standing from viewer up holds `react`.
+        if (!can(role, 'react')) {
+          return err('You do not have permission to react on this folio.', { status: 403 });
+        }
+      }
     }
 
     project.reactions = {

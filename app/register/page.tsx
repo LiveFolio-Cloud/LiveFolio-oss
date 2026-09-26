@@ -37,10 +37,14 @@ function RegisterForm() {
     return createBrowserClient(url, key);
   };
 
-  // Invitation context from query params (forwarded from invite emails)
+  // Invitation context from query params (forwarded from invite emails). The
+  // same three names carry BOTH invitation kinds: a workspace invitation
+  // (?orgName=…) and a folio invitation (?folioName=…) differ only in the copy
+  // their banner shows — the token is the credential either way.
   const inviteToken = searchParams.get('invite');
   const inviteEmail = searchParams.get('email');
   const inviteOrgName = searchParams.get('orgName');
+  const inviteFolioName = searchParams.get('folioName');
 
   // Referral code from query params (e.g., /register?ref=LIVE-A7X3K9)
   const referralCode = searchParams.get('ref');
@@ -68,8 +72,18 @@ function RegisterForm() {
     if (inviteEmail && !email) {
       setEmail(inviteEmail);
     }
+    // The token is stashed when the page MOUNTS, not when the form is
+    // submitted. Two flows never reach the submit branch with it: the recipient
+    // who follows the "Sign in" link below instead of creating an account (that
+    // link carries no query string), and the sign-up that needs email
+    // confirmation (no session, so the accept below is never called). In both,
+    // stashing on mount is what keeps the invitation alive until the login page
+    // replays it.
+    if (inviteToken) {
+      sessionStorage.setItem('livefolio_invite_token', inviteToken);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inviteEmail]);
+  }, [inviteEmail, inviteToken]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,16 +131,24 @@ function RegisterForm() {
 
         try {
           // The invite token from the emailed URL (?invite=…) is the proof of
-          // possession the accept route requires. Stashed too so the login
-          // page's catch-all can carry it if this redirect lands there.
-          if (inviteToken) {
-            sessionStorage.setItem('livefolio_invite_token', inviteToken);
-          }
-          await fetch('/api/invitations/accept', {
+          // possession the accept route requires, and the mount effect above
+          // has already stashed it so the login page can carry it if this
+          // redirect lands there. Folio invitations ride this same call — the
+          // endpoint looks the token up in both invite tables.
+          const res = await fetch('/api/invitations/accept', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(inviteToken ? { token: inviteToken } : {}),
           });
+          // A token is single-use: once redeemed there is nothing left in it,
+          // so the stash the login page would replay is dropped. A failed call
+          // keeps it, and the next sign-in tries again.
+          const data = (await res.json().catch(() => null)) as
+            | { accepted?: number; folioAccepted?: number }
+            | null;
+          if (data && ((data.accepted ?? 0) > 0 || (data.folioAccepted ?? 0) > 0)) {
+            sessionStorage.removeItem('livefolio_invite_token');
+          }
         } catch { /* non-critical — callback also handles this */ }
         setMessage({ type: 'success', text: 'Account created. Redirecting…' });
         // Hard navigation — guarantees the shell loading renders while SSR boots
@@ -177,7 +199,7 @@ function RegisterForm() {
             You&rsquo;ve been invited to join
           </div>
           <div className="mt-1 text-lg font-bold tracking-tight text-[#0F0F0D] dark:text-[#F4F4F0]">
-            {inviteOrgName || 'a workspace'}
+            {inviteOrgName || inviteFolioName || 'a workspace'}
           </div>
           <p className="mt-1.5 text-xs text-[#0F0F0D]/60 dark:text-[#F4F4F0]/60">
             Create your account to accept this invitation.

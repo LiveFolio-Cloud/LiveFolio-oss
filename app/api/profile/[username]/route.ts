@@ -7,6 +7,23 @@ import { err } from '@/lib/api/respond';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * This route is anonymous. Version and comment records carry an `author`, which
+ * is the author's email address once the record is stored — a public profile
+ * must not hand identities out, so the projection drops the field and keeps the
+ * record. Missing or malformed collections fall back to an empty array exactly
+ * as `|| []` did before.
+ */
+function withoutAuthor<T>(rows: T[] | null | undefined): T[] {
+  if (!Array.isArray(rows)) return (rows || []) as T[];
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const copy: Record<string, unknown> = { ...(row as Record<string, unknown>) };
+    delete copy.author;
+    return copy as T;
+  });
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ username: string }> }
@@ -144,16 +161,15 @@ export async function GET(
           description: r.description,
           createdAt: r.created_at,
           updatedAt: r.updated_at,
-          versions: r.versions || [],
+          versions: withoutAuthor(r.versions),
           isPrivate: r.is_private,
           allowComments: r.allow_comments,
           presentationModeOnly: r.presentation_mode_only,
           projectMode: r.project_mode,
           designPreferences: r.design_preferences,
           aiPersona: r.ai_persona,
-          collaborators: r.collaborators || [],
           reactions: r.reactions || {},
-          comments: r.comments || [],
+          comments: withoutAuthor(r.comments),
           status: r.status,
           projectId: r.project_id,
           folderId: r.folder_id,

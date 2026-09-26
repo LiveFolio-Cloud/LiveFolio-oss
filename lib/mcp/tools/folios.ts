@@ -27,7 +27,8 @@ import { extractUUIDFromSlug } from '@/lib/utils';
 import crypto from 'crypto';
 import { slugifyFolioTitle } from '@/lib/folio-slug';
 import { nextVersionId as nextFolioVersionId, applyVersionRetention } from '@/lib/version-retention';
-import { globalWithTunnel, requireSupabaseAdmin, resolveFolioForOrg, resolveOrgIdFromHeaders, resolveActingUserId, requireConfirmed, buildFolioLinks, getRequestOrigin, sanitizeAuthor } from '@/lib/mcp/shared';
+import { globalWithTunnel, requireSupabaseAdmin, resolveOrgIdFromHeaders, resolveActingUserId, requireConfirmed, buildFolioLinks, getRequestOrigin, sanitizeAuthor } from '@/lib/mcp/shared';
+import { requireWorkspaceOwner, resolveFolioForCaller, unwritableArguments } from '@/lib/mcp/tools/collaborators';
 
 export async function handleListProjects(request?: Request, args?: { include_archived?: boolean }) {
   const includeArchived = args?.include_archived === true;
@@ -98,9 +99,12 @@ export async function handleGetProject(args: any, request?: Request) {
 
   if (!isOSS) {
     const orgId = await resolveOrgIdFromHeaders();
-    requireSupabaseAdmin();
 
-    project = await resolveFolioForOrg(project_id, orgId);
+    // Resolves the caller's standing on this folio rather than assuming the
+    // workspace owns it: a folio that was shared with them by a grant reads
+    // too, while a caller with no standing gets the same answer as a missing
+    // id — the resolver owns that decision, and the not-found text is unchanged.
+    project = (await resolveFolioForCaller(project_id, orgId, 'view')).folio;
   } else {
     const db = await readDB();
     const found = db.find(p => p.id === project_id);
@@ -352,21 +356,43 @@ export async function handleUpdateProject(args: any, request?: Request) {
   }
 
   let versionId = '';
+  // Fields the caller supplied that their role on this folio does not carry.
+  // Named back in the result: the write still happens, and a bare 200 would
+  // otherwise read as "every field you sent was applied".
+  let strippedFields: string[] = [];
   if (!isOSS) {
     const orgId = await resolveOrgIdFromHeaders();
     const email = 'agent@livefolio.cloud';
-    requireSupabaseAdmin();
 
-    // Fetch current project (org-scoped — a folio outside the caller's org is
-    // not theirs to modify).
-    const project = await resolveFolioForOrg(project_id, orgId);
+    // The caller's standing on this folio, not an assumption that their
+    // workspace owns it: a live editor grant pushes versions here, a viewer
+    // grant does not, and an unrelated caller gets the missing-folio answer.
+    const { folio: project, role } = await resolveFolioForCaller(
+      project_id,
+      orgId,
+      'push_versions'
+    );
     const lastVersion = project.versions[project.versions.length - 1];
+
+    // The whole row is rewritten below, so an owner-only field cannot be
+    // protected by a check on the route — it has to be refused per column. Only
+    // what the CALLER sent is stripped; a column they did not send travels from
+    // the stored row unchanged, so a stripped field is written back byte for
+    // byte rather than cleared.
+    strippedFields = unwritableArguments(role, args);
+    const mayWrite = (argument: string) => !strippedFields.includes(argument);
+
+    // The folio's OWN workspace, not the caller's. A collaborator's version
+    // push files its assets under the workspace that owns the folio — where the
+    // raw route looks for them — and is retained under that workspace's plan. A
+    // stored row always carries its org; the fallback only covers a null.
+    const folioOrgId = project.organization_id || orgId;
 
     let storedBytes = 0;
     if (hasFileChanges) {
       // Merge or replace files — offload base64 images to asset store
       let mergedFiles = { ...lastVersion.files, ...updated_files };
-      const processed = await processUploadFiles(mergedFiles, project_id, orgId);
+      const processed = await processUploadFiles(mergedFiles, project_id, folioOrgId);
       mergedFiles = processed.files;
       storedBytes = processed.storedBytes;
 
@@ -382,27 +408,28 @@ export async function handleUpdateProject(args: any, request?: Request) {
 
       project.versions.push(newVersion);
       // Free plan: retain only the last 25 versions / 30 days
-      project.versions = await applyVersionRetention(project.versions, orgId);
+      project.versions = await applyVersionRetention(project.versions, folioOrgId);
     } else {
       // Metadata-only update — no new version checkpoint.
       versionId = lastVersion?.versionId || '';
     }
     project.updatedAt = new Date().toISOString();
 
-    // Apply optional metadata updates
-    if (title !== undefined) project.title = title;
-    if (description !== undefined) project.description = description;
-    if (isPrivate !== undefined) project.isPrivate = isPrivate;
-    if (accessKey !== undefined) project.accessKey = accessKey;
-    if (allowComments !== undefined) project.allowComments = allowComments;
-    if (presentationModeOnly !== undefined) project.presentationModeOnly = presentationModeOnly;
-    if (status !== undefined) project.status = status;
-    if (paid_access !== undefined) project.paidAccess = paidAccess;
-    if (thumbnail_url !== undefined) project.thumbnailUrl = thumbnail_url;
+    // Apply optional metadata updates, each behind the field's own capability
+    // so a role that cannot write it leaves the stored value alone.
+    if (mayWrite('title') && title !== undefined) project.title = title;
+    if (mayWrite('description') && description !== undefined) project.description = description;
+    if (mayWrite('isPrivate') && isPrivate !== undefined) project.isPrivate = isPrivate;
+    if (mayWrite('accessKey') && accessKey !== undefined) project.accessKey = accessKey;
+    if (mayWrite('allowComments') && allowComments !== undefined) project.allowComments = allowComments;
+    if (mayWrite('presentationModeOnly') && presentationModeOnly !== undefined) project.presentationModeOnly = presentationModeOnly;
+    if (mayWrite('status') && status !== undefined) project.status = status;
+    if (mayWrite('paid_access') && paid_access !== undefined) project.paidAccess = paidAccess;
+    if (mayWrite('thumbnail_url') && thumbnail_url !== undefined) project.thumbnailUrl = thumbnail_url;
 
     // Listing guard — flipping a folio INTO a listing requires account
     // standing + rights affirmation (existing affirmations carry forward).
-    if (listingMeta?.listed) {
+    if (mayWrite('listing') && listingMeta?.listed) {
       const guardCode = await listingWriteGuard({
         orgId,
         listed: true,
@@ -419,7 +446,7 @@ export async function handleUpdateProject(args: any, request?: Request) {
         throw new Error('LISTING_NEEDS_RIGHTS_ATTESTATION: Set rightsAttestedAt (ISO timestamp) on the listing to affirm "I own this content or have the necessary rights/licenses to sell and distribute it."');
       }
     }
-    if (listing !== undefined) {
+    if (mayWrite('listing') && listing !== undefined) {
       // Never wipe the rights affirmation on later listing edits/unlists.
       project.listing = preserveAttestation(listingMeta, project.listing);
     }
@@ -427,7 +454,6 @@ export async function handleUpdateProject(args: any, request?: Request) {
     // Preserve the folio's existing organization — don't overwrite on update.
     // `transformFolioRecord` copies `organization_id` straight through, so the
     // resolved project carries the same value the raw row did.
-    const folioOrgId = project.organization_id || orgId;
     const dbRecord = transformToFolioRecord(project, folioOrgId);
     const estimatedSize = JSON.stringify(dbRecord).length;
     const MAX_MCP_FOLIO_SIZE = 32_000_000;
@@ -501,6 +527,15 @@ export async function handleUpdateProject(args: any, request?: Request) {
     success: true,
     project_id,
     versionId,
+    // Present only when something was refused, so the caller is never left
+    // believing an owner-only change (a publish, a price, a privacy flip) took
+    // effect when the write deliberately skipped it.
+    ...(strippedFields.length > 0
+      ? {
+          stripped_fields: strippedFields,
+          note: `Not applied — these need the owner role on this folio: ${strippedFields.join(', ')}. Everything else was written.`,
+        }
+      : {}),
     share_url: `${shareBase}/share/${project_id}`,
     ...buildFolioLinks(project_id, origin)
   };
@@ -518,6 +553,15 @@ export async function handleDeleteProject(args: any) {
   if (!isOSS) {
     const orgId = await resolveOrgIdFromHeaders();
     requireSupabaseAdmin();
+
+    // Deleting is refused twice over, and both refusals are needed. The folio
+    // must resolve for this caller at all (which answers a stranger with the
+    // missing-folio string, not a permission one), and on top of that only the
+    // workspace's Owner may destroy one — a teammate who is neither the Owner
+    // nor the folio's owner is refused here exactly as the REST folio API
+    // refuses them.
+    await resolveFolioForCaller(project_id, orgId, 'delete');
+    await requireWorkspaceOwner(orgId);
 
     // Org-scoped fetch first — never delete a folio the caller can't see.
     const { data: row, error: fetchError } = await supabaseAdmin
@@ -696,7 +740,15 @@ export async function handleArchiveFolio(args: any) {
   const { project_id } = args || {};
   if (!project_id) throw new Error("Argument 'project_id' is required.");
 
-  const orgId = isOSS ? undefined : await resolveOrgIdFromHeaders();
+  let orgId: string | undefined;
+  if (!isOSS) {
+    orgId = await resolveOrgIdFromHeaders();
+    // Same two refusals as deleting: the folio has to resolve for this caller,
+    // and archiving stays with the workspace's Owner.
+    await resolveFolioForCaller(project_id, orgId, 'archive');
+    await requireWorkspaceOwner(orgId);
+  }
+
   const state = await archiveFolio(project_id, orgId);
   if (!state) throw new Error(`Project with ID '${project_id}' not found.`);
 
@@ -716,7 +768,16 @@ export async function handleUnarchiveFolio(args: any) {
   const { project_id } = args || {};
   if (!project_id) throw new Error("Argument 'project_id' is required.");
 
-  const orgId = isOSS ? undefined : await resolveOrgIdFromHeaders();
+  let orgId: string | undefined;
+  if (!isOSS) {
+    orgId = await resolveOrgIdFromHeaders();
+    // Unarchive is the archive capability in reverse, so it carries the same
+    // pair of refusals — and it has to, or the archive tightening would be
+    // undone by the one call that brings a folio back.
+    await resolveFolioForCaller(project_id, orgId, 'archive');
+    await requireWorkspaceOwner(orgId);
+  }
+
   const state = await unarchiveFolio(project_id, orgId);
   if (!state) throw new Error(`Project with ID '${project_id}' not found.`);
 

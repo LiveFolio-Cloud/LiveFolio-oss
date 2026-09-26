@@ -23,9 +23,9 @@
  *   | description     | passthrough                   | `?? ''`                          |
  *   | updated_at      | `f.updated_at` (no fallback)  | `updated_at \|\| updatedAt`          |
  *   | updatedAt       | `f.updatedAt` (no fallback)   | `updated_at \|\| updatedAt`          |
- *   | comments        | passthrough (array)           | array → `.length`, else `0`      |
+ *   | comments        | passthrough − `author`        | array → `.length`, else `0`      |
  *   | reactions       | passthrough                   | object-guarded, else `{}`        |
- *   | versions        | passthrough                   | `[]`                             |
+ *   | versions        | passthrough − `author`        | `[]`                             |
  *   | thumbnail_url   | `?? thumbnailUrl ?? null`     | `?? null` (no camelCase alias)   |
  *   | paid_access     | `?? paidAccess ?? null`       | `?? null` (no camelCase alias)   |
  *   | isNew           | absent — caller adds it       | `false`                          |
@@ -89,6 +89,36 @@ export type FolioRow = Record<string, any>;
 export type FolioRowVariant = 'card' | 'listing';
 
 /**
+ * Drop `author` from version and comment records, keeping every record.
+ *
+ * On a stored record `author` holds the author's email address. The `'card'`
+ * variant is the anonymous public projection: its result is handed to
+ * `'use client'` components as props, so anything still on it is serialized
+ * into the page's RSC payload and readable by any visitor. Nothing on that
+ * side reads the field — a card uses a version's `files` and `versionId` to
+ * build its preview URL and a comment's `.length` for the count — while the
+ * authenticated editor renders who wrote what from `transformFolioRecord`,
+ * which is a different projection and keeps the field. So it is dropped here
+ * and only here.
+ *
+ * Copies each record and deletes the key rather than filtering records out: a
+ * version or comment with no author is still a version or comment, and
+ * dropping it would silently shrink a folio's history. A value that is not an
+ * array — including `undefined` and `null` — is returned untouched, exactly
+ * as the bare passthrough it replaces did, so the shape of a folio with no
+ * history is unchanged.
+ */
+function withoutAuthor(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const copy: Record<string, unknown> = { ...(row as Record<string, unknown>) };
+    delete copy.author;
+    return copy;
+  });
+}
+
+/**
  * Map a raw folio row into `FolioData`.
  *
  * @param row   the raw row (camelCase OSS or snake_case cloud)
@@ -139,9 +169,9 @@ export function toFolioData(row: FolioRow, variant: FolioRowVariant): FolioData 
     description: row.description,
     updated_at: row.updated_at,
     updatedAt: row.updatedAt,
-    comments: row.comments,
+    comments: withoutAuthor(row.comments) as unknown[] | undefined,
     reactions: row.reactions,
-    versions: row.versions,
+    versions: withoutAuthor(row.versions) as FolioData['versions'],
     thumbnail_url: row.thumbnail_url ?? row.thumbnailUrl ?? null,
     paid_access: row.paid_access ?? row.paidAccess ?? null,
   };

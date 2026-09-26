@@ -12,6 +12,8 @@ import { getPublicOrigin, getFolioEditUrl } from '@/lib/network';
 import { safeEqual } from '@/lib/crypto';
 import crypto from 'crypto';
 import { err } from '@/lib/api/respond';
+import { can, resolveFolioRole } from '../../_lib/role-gate';
+import { roleTargetOf } from '../../_lib/role-gate';
 
 import { buildCommentPinnedBlock } from '@/ee/integrations/slack/blocks';
 
@@ -43,6 +45,40 @@ interface IntegrationRow {
  * (silent no-op deletes). Re-resolve straight from the session cookie —
  * the same pattern /api/raw uses — preferring the user's Owner workspace.
  */
+/**
+ * The comment list for a moderation op (resolve/delete), resolved the way the
+ * POST does: by folio id alone, for the grant-based path. The org-scoped read
+ * stays the first door — this is only consulted when that one misses, i.e. the
+ * caller is outside the folio's org and may still hold a grant.
+ *
+ * Returns null for a folio that is missing OR archived — an archived folio
+ * answers the same 404 a missing one would, so it cannot confirm its own
+ * existence to a passer-by (the POST holds the same rule).
+ */
+async function loadCommentsForGrantPath(
+  queryId: string,
+  targetId: string
+): Promise<{ id: string; organization_id: string | null; comments: HTMLComment[] } | null> {
+  let { data, error } = await supabaseAdmin
+    .from('folios')
+    .select('id, organization_id, comments, archived_at')
+    .eq('id', queryId)
+    .maybeSingle();
+
+  if (!data && !error && queryId !== targetId) {
+    const res = await supabaseAdmin
+      .from('folios')
+      .select('id, organization_id, comments, archived_at')
+      .eq('id', targetId)
+      .maybeSingle();
+    if (!res.error && res.data) data = res.data;
+    error = res.error;
+  }
+
+  if (error || !data || data.archived_at) return null;
+  return { id: data.id, organization_id: data.organization_id, comments: data.comments || [] };
+}
+
 async function resolveOrgFromSessionCookie(): Promise<{ userId: string; orgId: string } | null> {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -143,7 +179,7 @@ export async function POST(
   try {
     const { id } = await context.params;
     let targetId = id;
-    const { email } = await getAuthContext();
+    const { email, userId } = await getAuthContext();
     const body = await request.json();
     const { text, versionId, filename, x, y, selector, elementHtml, author, type, parentId, slideIndex, sectionLabel } = body;
 
@@ -202,6 +238,22 @@ export async function POST(
       // Archived folios are closed to new public notes.
       if (project.archivedAt) return err('Project not found', { status: 404 });
 
+      // Security: the OSS branch previously honoured neither the folio-level
+      // switch nor the privacy gate — a private folio with comments disabled
+      // still accepted notes. Mirror the hardening the raw route already did
+      // (`app/api/raw/.../route.ts` "enforce isPrivate/accessKey in OSS too"):
+      // same two checks, same 403 body, so the OSS and Cloud surfaces agree.
+      if (project.allowComments === false) {
+        return err('Comments are disabled for this folio.', { status: 403 });
+      }
+      if (project.isPrivate) {
+        const accessKeyParam = ((body.accessKey as string) || '').trim();
+        const serverKey = (project.accessKey || '').trim();
+        if (!serverKey || !accessKeyParam || !safeEqual(accessKeyParam, serverKey)) {
+          return err('Access Denied: Invalid access key.', { status: 403 });
+        }
+      }
+
       const result = await runTransaction(async (db) => {
         const pIndex = db.findIndex((p) => p.id === targetId);
         if (pIndex === -1) throw new Error('Project not found');
@@ -222,14 +274,14 @@ export async function POST(
     // NOT the full row — avoids transferring 1-10 MB of version HTML on every comment POST.
     let { data: current, error: fetchError } = await supabaseAdmin
       .from('folios')
-      .select('id, organization_id, comments, allow_comments, title, is_private, access_key, archived_at')
+      .select('id, organization_id, comments, allow_comments, title, is_private, access_key, archived_at, status')
       .eq('id', queryId)
       .maybeSingle();
 
     if (!current && !fetchError && queryId !== targetId) {
       const res = await supabaseAdmin
         .from('folios')
-        .select('id, organization_id, comments, allow_comments, title, is_private, access_key, archived_at')
+        .select('id, organization_id, comments, allow_comments, title, is_private, access_key, archived_at, status')
         .eq('id', targetId)
         .maybeSingle();
       if (!res.error && res.data) current = res.data;
@@ -249,12 +301,39 @@ export async function POST(
       return err('Comments are disabled for this folio.', { status: 403 });
     }
 
-    // Private folios require a valid access key to comment.
+    // Private folios require a valid access key to comment — OR a standing.
+    // A collaborator's grant is their credential and the key is not theirs to
+    // answer; a signed-in key-holder keeps commenting exactly as
+    // before this gate existed.
     if (current.is_private) {
       const accessKeyParam = ((body.accessKey as string) || '').trim();
       const serverKey = (current.access_key || '').trim();
-      if (!serverKey || !accessKeyParam || !safeEqual(accessKeyParam, serverKey)) {
-        return err('Access Denied: Invalid access key.', { status: 403 });
+      const keyOk = !!serverKey && !!accessKeyParam && safeEqual(accessKeyParam, serverKey);
+      if (!keyOk) {
+        const role = await resolveFolioRole(userId, roleTargetOf(current));
+        if (role === 'viewer') {
+          // They can see the folio, so an open refusal leaks nothing; the key
+          // message would be wrong for them — they were never sent one.
+          return err('You need comment access to add comments to this folio.', { status: 403 });
+        }
+        if (role !== 'commenter' && role !== 'editor' && role !== 'owner') {
+          return err('Access Denied: Invalid access key.', { status: 403 });
+        }
+      }
+    }
+
+    // Draft folios are hidden from everyone but a standing (an org member, or
+    // a collaborator whose grant admits them). A stranger gets the same 404 a
+    // missing folio would — a draft must not confirm its own existence
+    // (the archived check above holds the same rule). Public published folios
+    // keep today's rule: any signed-in user may comment.
+    if (current.status === 'draft') {
+      const role = await resolveFolioRole(userId, roleTargetOf(current));
+      if (role === 'none' || role === 'anonymous') {
+        return err('Project not found', { status: 404 });
+      }
+      if (!can(role, 'comment')) {
+        return err('You need comment access to add comments to this folio.', { status: 403 });
       }
     }
 
@@ -393,7 +472,8 @@ export async function PUT(
   try {
     const { id } = await context.params;
     let targetId = id;
-    let { orgId } = await getAuthContext();
+    const { orgId: headerOrgId, email, userId } = await getAuthContext();
+    let orgId = headerOrgId;
     const body = await request.json();
     const { commentId, resolved } = body;
 
@@ -453,7 +533,36 @@ export async function PUT(
       fetchError = res.error;
     }
 
-    if (fetchError || !current) throw new Error('Project not found');
+    if (fetchError || !current) {
+      // Not under the caller's org. A collaborator outside the org may still
+      // moderate their OWN comments — resolve the standing before giving up.
+      // (The grant path needs the middleware-injected identity; a stale-cookie
+      // fallback path has no email to compare authors with, so it degrades to
+      // the same 404 a stranger gets and the caller retries once refreshed.)
+      const folio = await loadCommentsForGrantPath(queryId, targetId);
+      const role = folio ? await resolveFolioRole(userId, roleTargetOf(folio)) : 'none';
+      if (!folio || (role !== 'commenter' && role !== 'editor' && role !== 'owner')) {
+        return err('Project not found.', { status: 404 });
+      }
+      const comments: HTMLComment[] = folio.comments;
+      const comment = comments.find((c: HTMLComment) => c.id === commentId);
+      if (!comment) return err('Comment not found.', { status: 404 });
+      if (
+        role !== 'owner' &&
+        (comment.author || '').toLowerCase() !== (email || '').toLowerCase()
+      ) {
+        return err('You can only resolve your own comments.', { status: 403 });
+      }
+      comment.resolved = resolved;
+      const { error: updateError } = await supabaseAdmin
+        .from('folios')
+        .update({ comments, updated_at: new Date().toISOString() })
+        .eq('id', folio.id);
+      if (updateError) throw updateError;
+      projectMemoryCache.invalidate(folio.id);
+      return NextResponse.json({ success: true, comment });
+    }
+
     const comments: HTMLComment[] = current.comments || [];
     const comment = comments.find((c: HTMLComment) => c.id === commentId);
     if (!comment) throw new Error('Comment not found');
@@ -484,7 +593,8 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     let targetId = id;
-    let { orgId } = await getAuthContext();
+    const { orgId: headerOrgId, email, userId } = await getAuthContext();
+    let orgId = headerOrgId;
     const { searchParams } = new URL(request.url);
     const commentId = searchParams.get('commentId');
 
@@ -545,7 +655,34 @@ export async function DELETE(
       fetchError = res.error;
     }
 
-    if (fetchError || !current) throw new Error('Project not found');
+    if (fetchError || !current) {
+      // The grant-based door — same rule as resolve: a collaborator outside
+      // the org may delete only their own comments.
+      const folio = await loadCommentsForGrantPath(queryId, targetId);
+      const role = folio ? await resolveFolioRole(userId, roleTargetOf(folio)) : 'none';
+      if (!folio || (role !== 'commenter' && role !== 'editor' && role !== 'owner')) {
+        return err('Project not found.', { status: 404 });
+      }
+      const comment = (folio.comments || []).find((c: HTMLComment) => c.id === commentId);
+      if (!comment) return err('Comment not found.', { status: 404 });
+      if (
+        role !== 'owner' &&
+        (comment.author || '').toLowerCase() !== (email || '').toLowerCase()
+      ) {
+        return err('You can only delete your own comments.', { status: 403 });
+      }
+      const comments: HTMLComment[] = (folio.comments || []).filter(
+        (c: HTMLComment) => c.id !== commentId
+      );
+      const { error: updateError } = await supabaseAdmin
+        .from('folios')
+        .update({ comments, updated_at: new Date().toISOString() })
+        .eq('id', folio.id);
+      if (updateError) throw updateError;
+      projectMemoryCache.invalidate(folio.id);
+      return NextResponse.json({ success: true });
+    }
+
     const comments: HTMLComment[] = (current.comments || []).filter(
       (c: HTMLComment) => c.id !== commentId
     );

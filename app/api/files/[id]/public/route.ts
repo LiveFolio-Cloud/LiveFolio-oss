@@ -11,6 +11,7 @@ import { safeEqual } from '@/lib/crypto';
 import { err } from '@/lib/api/respond';
 import { sessionSupabaseClient } from '@/lib/api/session';
 import { isOrgMember } from '@/lib/api/membership';
+import { can, resolveFolioRole } from '../../_lib/role-gate';
 import { resolveByHyphenSuffix } from '@/lib/api/folio-id';
 
 export const dynamic = 'force-dynamic';
@@ -116,8 +117,19 @@ export async function GET(
     // 'none' as locked, so anything less would immediately show the lock/
     // paywall overlay right after the key is accepted.
     const keyAccess = isPrivate && keyValid;
-    let viewerAccess: 'owner' | 'granted' | 'preview' | 'none' = 'none';
+    let viewerAccess: 'owner' | 'granted' | 'preview' | 'none' | 'collaborator' = 'none';
     if (keyAccess) viewerAccess = 'owner';
+
+    // The viewer is resolved ONCE here and reused by the paid-gate block below,
+    // which needs the same answer; for an anonymous request `/supabase/auth-js`
+    // settles `getUser()` locally (no session → no auth round trip), so the hot
+    // public path does not pay for a check it cannot use.
+    let viewer: { id: string } | null = null;
+    try {
+      const clientSupabase = await sessionSupabaseClient();
+      const { data: authData } = await clientSupabase.auth.getUser();
+      viewer = authData.user;
+    } catch { /* anonymous */ }
 
     // ── Paid gate metadata (cloud only) ──────────────────────────────
     // Resolve the effective gate and the VIEWER's standing, so the share
@@ -160,13 +172,9 @@ export async function GET(
           allowDownload: gate.config.allowDownload === true,
         };
 
-        // Viewer identity — null-safe (anonymous visitors get preview/none).
-        let user: { id: string } | null = null;
-        try {
-          const clientSupabase = await sessionSupabaseClient();
-          const { data: authData } = await clientSupabase.auth.getUser();
-          user = authData.user;
-        } catch { /* anonymous */ }
+        // Viewer identity — resolved above, shared with the collaborator
+        // standing (null-safe: anonymous visitors get preview/none).
+        const user = viewer;
 
         let isMember = false;
         if (user && project.organization_id) {
@@ -194,12 +202,43 @@ export async function GET(
       }
     }
 
-    // First-page preview prunes the page switcher server-side: non-owner/
-    // non-granted viewers only see index.html. `!hasAccess` already yields
-    // an empty list — keep that precedence (never fabricate ['index.html']).
+    // ── Collaborator standing ────────────────────────────────────────────
+    // A grant holder is neither an org member nor a buyer: without this they
+    // look like a stranger here, and the share surface would hand them the key
+    // prompt or the paywall for a folio they are explicitly on.
+    //
+    // Computed AFTER the gate block, never before: that block assigns
+    // `viewerAccess` unconditionally, so an earlier value would be clobbered.
+    // The change is strictly ADDITIVE — it is applied only when the resolved
+    // value would otherwise have been `none` or `preview`, so `owner` (org
+    // member or key holder) and `granted` (a purchase grant) keep exactly the
+    // value they had before this branch existed.
+    //
+    // Archived and moderated-down folios returned 404 above and never reach
+    // here: the standing covers publish state (draft, private key, paywall) and
+    // nothing else.
+    const collaboratorRole = viewer
+      ? await resolveFolioRole(viewer.id, {
+          id: project.id,
+          organization_id: project.organization_id ?? null,
+        })
+      : 'none';
+    if (
+      collaboratorRole !== 'owner' &&
+      can(collaboratorRole, 'bypass_paywall') &&
+      viewerAccess !== 'owner' &&
+      viewerAccess !== 'granted'
+    ) {
+      viewerAccess = 'collaborator';
+    }
+
+    // First-page preview prunes the page switcher server-side: viewers with no
+    // standing of their own only see index.html. A collaborator has standing, so
+    // the prune must not catch them — `!hasAccess` already yields an empty list,
+    // and that precedence stays (never fabricate ['index.html']).
     const activeFileList = !hasAccess
       ? []
-      : (gate && gate.config.previewMode === 'first_page' && viewerAccess !== 'owner' && viewerAccess !== 'granted'
+      : (gate && gate.config.previewMode === 'first_page' && viewerAccess !== 'owner' && viewerAccess !== 'granted' && viewerAccess !== 'collaborator'
         ? ['index.html']
         : Object.keys(latestVersion?.files || {}));
 

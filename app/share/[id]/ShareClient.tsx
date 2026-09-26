@@ -600,7 +600,10 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
       const res = await fetch(`/api/files/${project.id}/reactions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reactions: nextReactions })
+        // The access key rides along, mirroring the comments POST: on a private
+        // folio the reactions route accepts the key as the credential, so a
+        // key-holder who unlocked the page keeps reacting.
+        body: JSON.stringify({ reactions: nextReactions, accessKey: accessKey || undefined })
       });
       if (!res.ok) {
         // Server disagreed (expired session etc.) — roll the optimistic bump back.
@@ -631,8 +634,27 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
     return <LoadingScreen />;
   }
 
+  // ── Viewer standing ─────────────────────────────────────────────────
+  // A collaborator is a resolved folio grant (role ≥ viewer) — the owner's own
+  // act of sharing. They preview the folio the way the owner does: a draft
+  // renders and the access-key prompt is not theirs to answer. They are NOT the
+  // owner, so no owner-only chrome (`viewerAccess === 'owner'` branches below).
+  //
+  // Read here rather than next to the paid-gate block because the two screens
+  // below — draft and private — both consult it, and they return before that
+  // block.
+  const paidAccess: GatePaidAccess | null = project?.paidAccess || null;
+  const viewerAccess: ViewerAccess = project?.viewerAccess || 'owner';
+  const accentColor = project?.accentColor || null;
+  const collaboratorStanding = viewerAccess === 'collaborator';
+
+  // A draft the viewer may preview: honest `draft`/`status` from the SSR
+  // payload, gated on the standing the SSR gate itself used, so the two
+  // screens cannot disagree (an archived folio never reports 'collaborator'
+  // for this purpose — the server withholds the standing and sends this
+  // screen instead).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SSR row may carry either a legacy `draft` flag or a `status` string; both are read defensively
-  if ((project as any).draft || (project as any).status === 'draft') {
+  if (((project as any).draft || (project as any).status === 'draft') && !collaboratorStanding) {
     return (
       <div className="lf-tokens public-light min-h-screen flex items-center justify-center p-6 antialiased bg-[#F4F4F0] text-[#0F0F0D]">
         <Card className="p-8 w-full max-w-md space-y-6 text-center animate-fade rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
@@ -649,7 +671,9 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
     );
   }
 
-  if (project.isPrivate && !accessKey) {
+  // A collaborator holds the owner's grant, which is what the key stands for
+  // — and they were never sent one. Everyone else must prove it.
+  if (project.isPrivate && !accessKey && !collaboratorStanding) {
     return (
       <div className="lf-tokens public-light min-h-screen flex items-center justify-center p-6 antialiased bg-[#F4F4F0] text-[#0F0F0D]">
         <Card className="p-8 w-full max-w-md space-y-6 text-center animate-fade rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
@@ -686,9 +710,8 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
 
   // ── Paid gate: effective surface for this viewer (cloud only — OSS folios
   // never carry `paidAccess`, so every gate branch below is inert there).
-  const paidAccess: GatePaidAccess | null = project?.paidAccess || null;
-  const viewerAccess: ViewerAccess = project?.viewerAccess || 'owner';
-  const accentColor = project?.accentColor || null;
+  // `paidAccess` / `viewerAccess` / `accentColor` are read above, next to the
+  // draft and private screens, which consult the standing too.
   const isFirstPagePreview = viewerAccess === 'preview' && paidAccess?.previewMode === 'first_page';
   const isTimedPreview = viewerAccess === 'preview' && paidAccess?.previewMode === 'timed';
   // Locked surfaces: no access at all, a user-initiated unlock (first_page

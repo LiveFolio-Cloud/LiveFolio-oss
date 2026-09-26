@@ -14,6 +14,10 @@ import { checkRateLimit, getClientIp, buildRateLimitHeaders } from '@/lib/rate-l
 import { signPageToken, verifyPageToken } from '@/lib/folio-tokens';
 import { embedTraceMarker } from '@/lib/folio-keys';
 import { safeEqual } from '@/lib/crypto';
+import { sessionSupabaseClient } from '@/lib/api/session';
+import { isOrgMember } from '@/lib/api/membership';
+import { can, resolveFolioRole } from '@/app/api/files/_lib/role-gate';
+import type { FolioCapability, FolioRole } from '@/app/api/files/_lib/role-gate';
 import type { PaidAccessConfig } from '@/lib/gating/types';
 
 // ── Watermark helpers (Free-plan folios, public share only) ──────
@@ -124,11 +128,19 @@ function injectSourceLockFriction(html: string): string {
  * folios, skip the wrapping shell and receive the real HTML. The decision is
  * now session-based: Cloud resolves org membership from the session cookie +
  * DB (unforgeable); OSS has no members, so the local host stands in
- * (unchanged local-first behavior). */
-async function isGuestShare(request: Request, project: HTMLFile): Promise<boolean> {
+ * (unchanged local-first behavior).
+ *
+ * `readSession` is the caller's per-request session memo (see GET): this check
+ * and the gate checks must agree on who is calling, and an HTML response
+ * already pays for one identity read here, so it must not pay for two. */
+async function isGuestShare(
+  request: Request,
+  project: HTMLFile,
+  readSession: () => Promise<{ id: string } | null>
+): Promise<boolean> {
   const host = request.headers.get('host') || '';
   if (isOSS) return !isLocalHost(host);
-  return !(await isOrgMemberOf(project));
+  return !(await isOrgMemberOf(project, readSession));
 }
 
 // Keyed by org id — this used to be a single slot, so two orgs interleaving
@@ -203,33 +215,79 @@ async function isFreePlan(project: HTMLFile): Promise<boolean> {
 // can rehydrate an exact snapshot (comment/pin anchors). Blindly
 // enumerable, those same URLs hand scrapers the folio's FULL edit
 // history — content the author later removed or replaced keeps serving.
-// Non-latest versions now require a credentialed viewer (org member,
-// active grant, or the folio's valid access key). Anonymous callers and
-// non-member sessions get the latest published version only — which is
-// all the public link grants them anyway (guests pin to latest: the
-// share viewer never requests historical versions).
+// Non-latest versions require a credentialed viewer: an org member, a folio
+// collaborator (a grant is the owner's own act of sharing, so the
+// history it covers is the same history the member sees), a buyer grant, or
+// the folio's valid access key. Anonymous callers and strangers get the
+// latest published version only — which is all the public link grants them
+// anyway (guests pin to latest: the share viewer never requests historical
+// versions).
 
-/** Cloud session user — null for anonymous (mirrors the paid-gate lookup). */
+/** Cloud session user — null for anonymous (mirrors the paid-gate lookup).
+ *
+ * The cookie client itself is the SHARED one (`lib/api/session`) — this file
+ * used to carry four copies of "read the two public env vars, build an SSR
+ * client on the request cookies, ask for the user", and they all read the
+ * session through this one wrapper now. The only local part is the cookie
+ * probe: with no Supabase auth cookie the request is anonymous by definition,
+ * and the probe keeps the hot public-share path from building a client it
+ * cannot use. */
 async function resolveSessionUser(): Promise<{ id: string } | null> {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    if (!supabaseUrl || !supabaseAnonKey) return null;
     const cookieStore = await cookies();
-    // No Supabase auth cookie present → anonymous. Short-circuit so the hot
-    // public-share path (watermark/guest checks) never pays an auth RTT.
+    // No Supabase auth cookie present → anonymous.
     if (!cookieStore.getAll().some((c) => c.name.startsWith('sb-') || c.name.startsWith('supabase-'))) {
       return null;
     }
-    const { createServerClient } = await import('@/lib/supabase');
-    const clientSupabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-      cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} },
-    });
+    const clientSupabase = await sessionSupabaseClient();
     const { data } = await clientSupabase.auth.getUser();
     return data.user;
   } catch {
     return null;
   }
+}
+
+/**
+ * The viewer's resolved standing on this folio: who they are, and what
+ * `lib/collaborators` says they are on this folio.
+ *
+ * `role` is null when the question does not apply — OSS, or no identity at all
+ * — which is why every check below goes through `standingHas()` rather than
+ * reading `role` directly: null can never satisfy a capability.
+ */
+interface ViewerStanding {
+  /** Session user id, or null for an anonymous request. */
+  userId: string | null;
+  /** The resolved folio role, or null when it was not resolved. */
+  role: FolioRole | null;
+}
+
+/** Does this standing reach this capability on this folio?
+ *
+ * `can()` is total: a null role (OSS or anonymous) and an unrecognised
+ * capability both answer false, so a caller that has not established standing
+ * gets a refusal rather than the benefit of the doubt. */
+function standingHas(standing: ViewerStanding, capability: FolioCapability): boolean {
+  return standing.role !== null && can(standing.role, capability);
+}
+
+/** Resolve the session, then the role, for one viewer on one folio. */
+async function resolveStandingFor(
+  project: HTMLFile,
+  readSession: () => Promise<{ id: string } | null>
+): Promise<ViewerStanding> {
+  const user = await readSession();
+  if (!user) return { userId: null, role: null };
+  // Self-hosted installs have no grants AND `resolveFolioRole` answers 'owner'
+  // for every caller there — consulting it would silently turn the OSS
+  // private-key gate and the OSS draft gate into no-ops for every visitor.
+  // It is never asked in OSS.
+  if (isOSS) return { userId: user.id, role: null };
+  const role = await resolveFolioRole(user.id, {
+    id: project.id,
+    organization_id: project.organization_id ?? null,
+  });
+  return { userId: user.id, role };
 }
 
 // Membership decisions on the public share path must not hammer the DB per
@@ -276,8 +334,16 @@ function writeMembershipCache(cacheKey: string, member: boolean): void {
   _membershipCache.set(cacheKey, { member, expiresAt: Date.now() + _MEMBERSHIP_TTL_MS });
 }
 
-/** May this caller fetch a NON-latest version? (OSS: single-owner — yes.) */
-async function canViewHistorical(request: Request, project: HTMLFile): Promise<boolean> {
+/** May this caller fetch a NON-latest version? (OSS: single-owner — yes.)
+ *
+ * The caller's standing is passed in rather than resolved here: the four gates
+ * on this route share ONE resolution per request (see the memo in GET), so a
+ * request cannot be a collaborator for one gate and a stranger for the next. */
+async function canViewHistorical(
+  request: Request,
+  project: HTMLFile,
+  standing: ViewerStanding
+): Promise<boolean> {
   if (isOSS) return true;
   try {
     const { searchParams } = new URL(request.url);
@@ -291,45 +357,40 @@ async function canViewHistorical(request: Request, project: HTMLFile): Promise<b
     ) {
       return true;
     }
-    if (!supabaseAdmin) return false;
-    const user = await resolveSessionUser();
-    if (!user) return false;
-    // Org member (owner/team) sees the full history.
-    const { data: membership } = await supabaseAdmin
-      .from('organization_members')
-      .select('id')
-      .eq('organization_id', project.organization_id)
-      .eq('user_id', user.id)
-      .limit(1);
-    if (membership && membership.length > 0) return true;
+    if (!standing.userId) return false;
+    // Org member (owner/team) and folio collaborator (role ≥ viewer) both see
+    // the full history — one resolution, the module's single decision point.
+    if (standingHas(standing, 'view')) return true;
     // Active buyer grant — folio grant, or workspace grant when the folio
     // inherits the workspace gate (same precedence as the paid gate).
-    if (await hasActiveGrant(user.id, 'folio', project.id)) return true;
+    if (await hasActiveGrant(standing.userId, 'folio', project.id)) return true;
     const folioHasOwnGate = project.paidAccess != null;
     if (!folioHasOwnGate && project.projectId &&
-        await hasActiveGrant(user.id, 'workspace', project.projectId)) {
+        await hasActiveGrant(standing.userId, 'workspace', project.projectId)) {
       return true;
     }
   } catch { /* any failure → deny */ }
   return false;
 }
 
-/** Is the requesting session an org member? (Source-lock member exemption.) */
-async function isOrgMemberOf(project: HTMLFile): Promise<boolean> {
+/** Is the requesting session an org member? (Source-lock member exemption.)
+ *
+ * The probe is the shared one (`lib/api/membership`); the 5-minute cache in
+ * front of it stays, because this runs on the public HTML path and a member's
+ * answer is what keeps the watermark and the source-lock wrap off their own
+ * folios. */
+async function isOrgMemberOf(
+  project: HTMLFile,
+  readSession: () => Promise<{ id: string } | null>
+): Promise<boolean> {
   if (isOSS || !project.organization_id || !supabaseAdmin) return false;
-  const user = await resolveSessionUser();
+  const user = await readSession();
   if (!user) return false;
   const cacheKey = `${user.id}:${project.organization_id}`;
   const cachedMember = readMembershipCache(cacheKey);
   if (cachedMember !== null) return cachedMember;
   try {
-    const { data: membership } = await supabaseAdmin
-      .from('organization_members')
-      .select('id')
-      .eq('organization_id', project.organization_id)
-      .eq('user_id', user.id)
-      .limit(1);
-    const member = !!(membership && membership.length > 0);
+    const member = await isOrgMember(user.id, project.organization_id);
     writeMembershipCache(cacheKey, member);
     return member;
   } catch {
@@ -419,6 +480,30 @@ export async function GET(
 
     let project: HTMLFile | null = null;
 
+    // ── One viewer resolution per request ─────────────────────────────
+    // Five checks below ask who is calling: the private-key gate, the
+    // draft/takedown gate, the historical-version pin, the paid gate — and the
+    // guest/member check that decides the watermark and the source-lock wrap.
+    // They used to ask separately, each with its own session read and its own
+    // membership query; they now share ONE session read, which is also what
+    // stops them disagreeing with each other.
+    //
+    // Two levels, deliberately: the session read is shared by everything (the
+    // guest check needs only that), while the ROLE is resolved lazily, because
+    // it costs a membership probe and a grant read that a request which never
+    // reaches a gate should not pay for — the common anonymous, published, free
+    // case reads no session at all (the cookie probe) and resolves no role.
+    let sessionPromise: Promise<{ id: string } | null> | null = null;
+    const readSession = (): Promise<{ id: string } | null> => {
+      if (!sessionPromise) sessionPromise = resolveSessionUser();
+      return sessionPromise;
+    };
+    let standingPromise: Promise<ViewerStanding> | null = null;
+    const viewerStanding = (folio: HTMLFile): Promise<ViewerStanding> => {
+      if (!standingPromise) standingPromise = resolveStandingFor(folio, readSession);
+      return standingPromise;
+    };
+
     if (isOSS) {
       const db = await readDB();
       const match = db.find((p) => p.id === id);
@@ -469,37 +554,18 @@ export async function GET(
           }
           // Valid access key — skip Supabase auth check, allow through
         } else {
-          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-          const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-          const cookieStore = await cookies();
-          const { createServerClient } = await import('@/lib/supabase');
-          const clientSupabase = createServerClient(
-            supabaseUrl,
-            supabaseAnonKey,
-            {
-              cookies: {
-                getAll() { return cookieStore.getAll(); },
-                setAll() {} // No-op in GET route
-              }
+          // A collaborator (role ≥ viewer) bypasses the key: the grant
+          // IS the owner handing over the key, and asking them for a secret the
+          // owner never sent them would leave every invited viewer locked out.
+          // Org members keep their standing through the same check (resolveFolioRole
+          // answers 'owner' for them), so the 401-vs-403 shape below is the only
+          // part still owed to identity: signed out is 401, signed in without
+          // standing on this folio is 403.
+          const standing = await viewerStanding(project);
+          if (!standingHas(standing, 'bypass_access_key')) {
+            if (!standing.userId) {
+              return new Response('Unauthorized: Private folio preview requires an active session.', { status: 401 });
             }
-          );
-
-          const { data: { user } } = await clientSupabase.auth.getUser();
-
-          if (!user) {
-            return new Response('Unauthorized: Private folio preview requires an active session.', { status: 401 });
-          }
-
-          // Check organization membership
-          const { data: membership, error: memberErr } = await supabaseAdmin
-            .from('organization_members')
-            .select('id')
-            .eq('organization_id', project.organization_id)
-            .eq('user_id', user.id)
-            .limit(1);
-
-          if (memberErr || !membership || membership.length === 0) {
             return new Response('Access Denied: You do not have permission to preview this private folio.', { status: 403 });
           }
         }
@@ -514,6 +580,15 @@ export async function GET(
     // moderated-down folios unless the viewer is an org member (editor
     // preview). `moderation_status = 'hidden'` is a platform takedown:
     // identical to draft for the public, but members keep edit access.
+    //
+    // The collaborator standing joins the Cloud arm: `view` is the
+    // capability that covers "any publish state", which is exactly this gate.
+    // Two deliberate exclusions keep the grant's reach where §2 puts it:
+    //   · a takedown is a PLATFORM action, not a publish state, so it asks the
+    //     org-member-only capability (`publish`) and a grant never bypasses it;
+    //   · an ARCHIVED folio is a draft by construction (archive forces
+    //     status='draft'), and a grant never un-archives — `archivedAt` keeps
+    //     the archived case member-only, exactly as before this task.
     const takenDown = project.moderationStatus === 'hidden';
     if (project.status === 'draft' || takenDown) {
       const host = request.headers.get('host');
@@ -524,28 +599,14 @@ export async function GET(
           return new Response('This folio has not been published yet.', { status: 404 });
         }
       } else {
-        // Cloud: allow authenticated org members (editor preview), block others
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-        const cookieStore = await cookies();
-        const { createServerClient } = await import('@/lib/supabase');
-        const clientSupabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-          cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} }
-        });
-        const { data: { user } } = await clientSupabase.auth.getUser();
-        if (!user) {
-          return new Response(
-            takenDown ? 'This folio is no longer available.' : 'This folio has not been published yet.',
-            { status: 404 }
-          );
-        }
-        const { data: membership } = await supabaseAdmin
-          .from('organization_members')
-          .select('id')
-          .eq('organization_id', project.organization_id)
-          .eq('user_id', user.id)
-          .limit(1);
-        if (!membership || membership.length === 0) {
+        // Cloud: allow anyone with standing on this folio, block everyone else.
+        // Same 404 either way — a refusal must not confirm the folio exists.
+        const standing = await viewerStanding(project);
+        const archived = Boolean(project.archivedAt);
+        const allowed = takenDown || archived
+          ? standingHas(standing, 'publish')
+          : standingHas(standing, 'view');
+        if (!allowed) {
           return new Response(
             takenDown ? 'This folio is no longer available.' : 'This folio has not been published yet.',
             { status: 404 }
@@ -585,8 +646,8 @@ export async function GET(
     }
 
     // Determine target version — default latest. ?v= pins an exact version;
-    // only credentialed viewers (member/grant/access key) may pin a
-    // NON-latest one. Anonymously requesting an old version silently
+    // only credentialed viewers (member/collaborator/buyer/access key) may pin
+    // a NON-latest one. Anonymously requesting an old version silently
     // serves the latest: no 403 oracle ("this version exists but is
     // locked") and blind ?v= enumeration yields nothing beyond the public
     // link. Version ids are uuid-ish; a garbage id simply falls through
@@ -597,7 +658,7 @@ export async function GET(
       const latestId = version?.versionId;
       if (match && match.versionId === latestId) {
         version = match; // the public version — no identity needed
-      } else if (match && (await canViewHistorical(request, project))) {
+      } else if (match && (await canViewHistorical(request, project, await viewerStanding(project)))) {
         version = match;
       }
     }
@@ -662,31 +723,18 @@ export async function GET(
       if (gate?.config.enabled) {
         gateCfg = gate.config;
 
-        // Viewer identity — null-safe (anonymous visitors simply paywall).
-        let user: { id: string } | null = null;
-        try {
-          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-          const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-          const cookieStore = await cookies();
-          const { createServerClient } = await import('@/lib/supabase');
-          const clientSupabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-            cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} }
-          });
-          const { data } = await clientSupabase.auth.getUser();
-          user = data.user;
-        } catch { /* anonymous */ }
+        // Viewer identity + standing — the SAME memoized resolution the
+        // private-key, draft and historical gates above use, so one request
+        // cannot be judged differently by two of them. Null-safe: an anonymous
+        // visitor simply paywalls.
+        const standing = await viewerStanding(project);
+        const user = standing.userId ? { id: standing.userId } : null;
 
         // Owner/member bypass — org members always see their own folios.
-        let isMember = false;
-        if (user && project.organization_id) {
-          const { data: membership } = await supabaseAdmin
-            .from('organization_members')
-            .select('id')
-            .eq('organization_id', project.organization_id)
-            .eq('user_id', user.id)
-            .limit(1);
-          isMember = !!(membership && membership.length > 0);
-        }
+        // `publish` is the matrix's org-member-only capability, so this asks
+        // the member question through the resolver rather than probing
+        // organization_members a second time on the same request.
+        const isMember = standingHas(standing, 'publish');
 
         // Grants: a folio grant always unlocks; a workspace grant only
         // unlocks INHERITED folios (a folio with its own config is its own).
@@ -699,7 +747,13 @@ export async function GET(
               : false);
         }
 
-        const canView = isMember || granted;
+        // A collaborator (role ≥ viewer) passes the paywall without a
+        // purchase: the grant is the owner's own act of sharing, exactly like
+        // the access key. It deliberately does NOT set the buyer-trace state
+        // below: that marker identifies a PAYING viewer, and a collaborator has
+        // paid nothing.
+        const collaboratorBypass = standingHas(standing, 'bypass_paywall');
+        const canView = isMember || granted || collaboratorBypass;
         gateViewerGranted = granted && !!user;
         gateViewerId = granted ? (user?.id ?? null) : null;
         if (!canView) {
@@ -853,7 +907,7 @@ export async function GET(
       // reach the editor, which always fetches full source). Session-based —
       // the old Referer check let an anonymous caller spoof a /studio/
       // referer and receive the real HTML unwrapped.
-      if (!(await isGuestShare(request, project))) return null;
+      if (!(await isGuestShare(request, project, readSession))) return null;
       const token = signPageToken({ f: project.id, v: version.versionId ?? '', n: servedFile });
       if (!token) return null; // secret unconfigured → fail open (logged in lib)
       forceNoStore = true;
@@ -880,7 +934,7 @@ export async function GET(
           return new Response('Access denied', { status: 403, headers: applyGateHeaders() });
         }
         let html = version.files['index.html'];
-        if ((await isFreePlan(project)) && (await isGuestShare(request, project))) {
+        if ((await isFreePlan(project)) && (await isGuestShare(request, project, readSession))) {
           html = injectWatermark(html);
         }
         if (lock?.kind === 'payload') {
@@ -1067,7 +1121,7 @@ export async function GET(
 
     // Inject subtle watermark for Free-plan folios on HTML responses. Guest
     // decision is session-based (never Referer — spoofable, see isGuestShare).
-    const shouldWatermark = isHtml && (await isFreePlan(project)) && (await isGuestShare(request, project));
+    const shouldWatermark = isHtml && (await isFreePlan(project)) && (await isGuestShare(request, project, readSession));
     if (shouldWatermark) {
       code = injectWatermark(code);
     }

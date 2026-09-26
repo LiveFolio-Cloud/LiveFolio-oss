@@ -8,11 +8,12 @@
  * panel stays focused on who can see the folio and how it's shared.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, RefreshCw, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import type { HTMLFile } from '@/lib/db';
 import { isCloud } from '@/lib/env';
 import { Toggle } from '../settings-popup/toggle';
 import { HeaderMenuSurface } from './header-menu';
+import { CollaboratorSection } from './collaborator-section';
 
 /** The folio slice the share menu reads/writes. HTMLFile covers every field
  *  the menu toggles; `ownerUsername` is an extra echoed by the GET /api/files
@@ -90,7 +91,6 @@ export function ShareMenu({
 }) {
   const [folio, setFolio] = useState<ShareFolio>(project);
   const [saving, setSaving] = useState(false);
-  const [collabEmail, setCollabEmail] = useState('');
   const accessKeyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -261,62 +261,11 @@ export function ShareMenu({
           </div>
         )}
 
-        {isCloud && (
-          <div className="space-y-1.5 border-t border-[#0F0F0D]/5 pt-3 dark:border-[#F4F4F0]/10">
-            <label className="text-[11px] font-bold text-ink/50">Collaborators</label>
-            <div className="flex flex-wrap gap-1.5">
-              {(folio?.collaborators || []).map((email: string, i: number) => (
-                <span
-                  key={`${email}-${i}`}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-2.5 py-1 text-xs font-medium text-ink/70"
-                >
-                  {email}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      put('collaborators', (folio.collaborators || []).filter((_: string, j: number) => j !== i))
-                    }
-                    className="cursor-pointer text-ink/40 hover:text-rose-600"
-                    aria-label={`Remove ${email}`}
-                  >
-                    <X size={11} />
-                  </button>
-                </span>
-              ))}
-            </div>
-            <div className="flex items-center gap-1.5">
-              <input
-                value={collabEmail}
-                onChange={(e) => setCollabEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const email = collabEmail.trim().toLowerCase();
-                    if (email && !(folio.collaborators || []).includes(email)) {
-                      put('collaborators', [...(folio.collaborators || []), email]);
-                      setCollabEmail('');
-                    }
-                  }
-                }}
-                placeholder="collaborator@example.com"
-                className="h-8 w-full border-0 border-b border-[#0F0F0D]/10 dark:border-[#F4F4F0]/10 bg-transparent px-0.5 text-[13px] text-ink placeholder:text-ink/50 focus:border-b-2 focus:border-[var(--app-accent)] focus:outline-none transition-colors"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const email = collabEmail.trim().toLowerCase();
-                  if (email && !(folio.collaborators || []).includes(email)) {
-                    put('collaborators', [...(folio.collaborators || []), email]);
-                    setCollabEmail('');
-                  }
-                }}
-                className="h-8 shrink-0 rounded-lg bg-black/5 px-3 text-xs font-semibold text-ink hover:bg-black/10"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Collaborators — Cloud only. The list, the roles and the refusals all
+            come from /api/collaborators: the legacy email array on the folio is
+            no longer written or read (PUT refuses it to every role), so this
+            block must never render from `folio.collaborators`. */}
+        {isCloud && <CollaboratorSection folioId={folio.id} open={open} />}
       </div>
     </HeaderMenuSurface>
   );
