@@ -4,8 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { CheckCheck, Inbox as InboxIcon, Search, X } from 'lucide-react';
-import { useInboxUnread } from '@/hooks/use-inbox-unread';
-import type { InboxCommentItem, InboxReactionDelta } from '@/lib/inbox';
+import { useInboxUnread, type UseInboxUnreadResult } from '@/hooks/use-inbox-unread';
+import { grantMatchesQuery, type InboxCommentItem, type InboxGrantItem, type InboxItem, type InboxReactionDelta } from '@/lib/inbox';
 import {
   applyFilter,
   filterCounts,
@@ -17,6 +17,28 @@ import {
 } from '@/lib/inbox-view';
 import InboxRow from './InboxRow';
 import InboxSkeleton from './InboxSkeleton';
+
+/**
+ * The share half of the inbox store.
+ *
+ * `useInboxUnread` is the feed's single entry point (one poll, one watermark,
+ * shared by the sidebar badge and this page), and it is not yet widened to
+ * carry share rows — that file is outside this task's paths, and
+ * The companion report states the exact change. The view therefore types
+ * the store as its own result PLUS an optional grant surface, which compiles
+ * because every added member is optional: absent means "this store cannot
+ * carry shares yet", and the section below simply does not render. Nothing here
+ * invents data — a share row appears only when the store hands one over.
+ */
+type InboxStoreWithGrants = UseInboxUnreadResult & {
+  grants?: InboxGrantItem[];
+  markGrantRead?: (grant: InboxGrantItem) => void;
+  markGrantUnread?: (grant: InboxGrantItem) => void;
+};
+
+/** Stable identity for "no grants", so the memos below do not recompute on
+ *  every render while the store has no grant surface. */
+const NO_GRANTS: InboxGrantItem[] = [];
 
 /** Filter pills, in display order. */
 const FILTERS: { id: InboxFilter; label: string }[] = [
@@ -45,6 +67,7 @@ const FILTERS: { id: InboxFilter; label: string }[] = [
  */
 export default function InboxView() {
   const router = useRouter();
+  const inbox: InboxStoreWithGrants = useInboxUnread();
   const {
     items,
     reactions,
@@ -57,7 +80,10 @@ export default function InboxView() {
     markAllRead,
     markManyRead,
     markManyUnread,
-  } = useInboxUnread();
+  } = inbox;
+  const grants = inbox.grants ?? NO_GRANTS;
+  const markGrantRead = inbox.markGrantRead;
+  const markGrantUnread = inbox.markGrantUnread;
 
   const [filter, setFilter] = useState<InboxFilter>('all');
   const [query, setQuery] = useState('');
@@ -69,20 +95,47 @@ export default function InboxView() {
   const unread = useMemo(() => new Set(unreadIds), [unreadIds]);
 
   // Filter → search → group. One pipeline, so the pills, the search box and the
-  // day headers can never disagree about what is on screen.
+  // day headers can never disagree about what is on screen. Share rows take the
+  // same pills and the same box (see `visibleGrants`); only the day grouping is
+  // theirs to skip, because they are already their own group.
   const visibleItems = useMemo(
     () => searchItems(applyFilter(items, filter, unreadIds), query),
     [items, filter, unreadIds, query],
   );
   const visibleReactions = useMemo(() => searchReactions(reactions, query), [reactions, query]);
   const groups = useMemo(() => groupByDay(visibleItems), [visibleItems]);
-  const counts = useMemo(
-    () => filterCounts(items, unreadIds, reactions.length),
-    [items, unreadIds, reactions.length],
-  );
+
+  /**
+   * Share rows on screen.
+   *
+   * They follow the same pills as everything else, with the two exceptions the
+   * pills themselves imply: `Pins` / `Comments` / `Resolved` are questions about
+   * FEEDBACK, and a grant is not feedback — it is neither a pin nor a comment
+   * nor resolvable, so it is absent there rather than forced into a category it
+   * does not belong to. `All` and `Unread` show it like any other row, and a
+   * grant counts as unread by its id alone.
+   */
+  const visibleGrants = useMemo(() => {
+    if (filter !== 'all' && filter !== 'unread') return NO_GRANTS;
+    const inPill = filter === 'unread' ? grants.filter((g) => unread.has(g.id)) : grants;
+    return inPill.filter((g) => grantMatchesQuery(g, query));
+  }, [grants, filter, query, unread]);
+
+  const counts = useMemo(() => {
+    const base = filterCounts(items, unreadIds, reactions.length);
+    // A share is unread too, and the header counts it: leaving it out here would
+    // print "1 unread" above a pill that says 0. Same reason reactions are
+    // already added to this one count.
+    const unreadGrants = grants.filter((g) => unread.has(g.id)).length;
+    return { ...base, unread: base.unread + unreadGrants };
+  }, [items, unreadIds, reactions.length, grants, unread]);
 
   /** Flat row order, so the keyboard cursor maps to a group index. */
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  /** The keyboard order: shares first, then the feedback groups — the same
+   *  order the `[data-inbox-row]` nodes appear in the DOM, so the cursor's
+   *  scroll-into-view can address them by index. */
+  const rows = useMemo<InboxItem[]>(() => [...visibleGrants, ...flat], [visibleGrants, flat]);
   const selectMode = selected.size > 0;
 
   // A changing filter invalidates the cursor — it pointed into a list that no
@@ -107,12 +160,49 @@ export default function InboxView() {
     [markReactionRead, router],
   );
 
+  // A share row opens the folio it is about. The read mark is best-effort: the
+  // store exposes the grant mutations only once it carries shares, and until
+  // then the row still opens (the row itself is the information).
+  const openGrant = useCallback(
+    (grant: InboxGrantItem) => {
+      markGrantRead?.(grant);
+      router.push(grant.href);
+    },
+    [markGrantRead, router],
+  );
+
   const toggleRead = useCallback(
     (item: InboxCommentItem) => {
       if (unread.has(item.id)) markItemRead(item);
       else markItemUnread(item);
     },
     [unread, markItemRead, markItemUnread],
+  );
+
+  const toggleGrantRead = useCallback(
+    (grant: InboxGrantItem) => {
+      if (unread.has(grant.id)) markGrantRead?.(grant);
+      else markGrantUnread?.(grant);
+    },
+    [unread, markGrantRead, markGrantUnread],
+  );
+
+  /** Open whichever kind of row the cursor is on. */
+  const openRow = useCallback(
+    (row: InboxItem) => {
+      if (row.kind === 'grant') openGrant(row);
+      else open(row);
+    },
+    [open, openGrant],
+  );
+
+  /** Toggle read on whichever kind of row the cursor is on. */
+  const toggleRowRead = useCallback(
+    (row: InboxItem) => {
+      if (row.kind === 'grant') toggleGrantRead(row);
+      else toggleRead(row);
+    },
+    [toggleRead, toggleGrantRead],
   );
 
   const toggleSelect = useCallback((item: InboxCommentItem) => {
@@ -156,30 +246,32 @@ export default function InboxView() {
 
       if (e.key === 'j' || e.key === 'ArrowDown') {
         e.preventDefault();
-        setCursor((c) => moveIndex(c, 1, flat.length));
+        setCursor((c) => moveIndex(c, 1, rows.length));
         return;
       }
       if (e.key === 'k' || e.key === 'ArrowUp') {
         e.preventDefault();
-        setCursor((c) => moveIndex(c, -1, flat.length));
+        setCursor((c) => moveIndex(c, -1, rows.length));
         return;
       }
-      const current = flat[cursor];
+      const current = rows[cursor];
       if (!current) return;
       if (e.key === 'Enter') {
         e.preventDefault();
-        open(current);
+        openRow(current);
       } else if (e.key === 'e') {
         e.preventDefault();
-        toggleRead(current);
+        toggleRowRead(current);
       } else if (e.key === 'x') {
         e.preventDefault();
-        toggleSelect(current);
+        // A share row has no bulk action (see InboxRow), so `x` is inert on it
+        // rather than selecting something the bulk bar cannot act on.
+        if (current.kind !== 'grant') toggleSelect(current);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [flat, cursor, open, toggleRead, toggleSelect, clearSelection]);
+  }, [rows, cursor, openRow, toggleRowRead, toggleSelect, clearSelection]);
 
   // Keep the keyboard cursor in view as it moves.
   useEffect(() => {
@@ -188,8 +280,9 @@ export default function InboxView() {
     row?.scrollIntoView({ block: 'nearest' });
   }, [cursor]);
 
-  const nothingAtAll = items.length === 0 && reactions.length === 0;
-  const nothingVisible = !nothingAtAll && flat.length === 0 && visibleReactions.length === 0;
+  const nothingAtAll = items.length === 0 && reactions.length === 0 && grants.length === 0;
+  const nothingVisible =
+    !nothingAtAll && flat.length === 0 && visibleReactions.length === 0 && visibleGrants.length === 0;
 
   return (
     // `relative` anchors the floating bulk bar; the column never scrolls as a
@@ -305,7 +398,36 @@ export default function InboxView() {
           />
         ) : (
           <div className="mx-auto w-full max-w-3xl">
-            {/* Reactions lead: they are aggregate-only (no timestamps, no
+            {/* Shares lead: a folio handed to you is the most consequential
+                thing this feed can carry, and the one row that is about access
+                rather than feedback. Chronological within itself — and, unlike
+                reactions, it has a real timestamp to be chronological WITH. */}
+            {visibleGrants.length > 0 && (
+              <section className="mb-5">
+                <GroupLabel>Shared with you</GroupLabel>
+                <div className="overflow-hidden rounded-xl ring-1 ring-[#0F0F0D]/5 dark:ring-white/10">
+                  {visibleGrants.map((grant) => (
+                    // `data-inbox-row` is how the keyboard cursor finds its
+                    // row by index; the sections render in `rows` order
+                    // (shares first), so the two orderings agree.
+                    <div key={grant.id} data-inbox-row>
+                      <InboxRow
+                        item={grant}
+                        unread={unread.has(grant.id)}
+                        highlighted={rows[cursor]?.id === grant.id}
+                        selected={false}
+                        selectMode={false}
+                        onOpen={() => openGrant(grant)}
+                        onToggleRead={() => toggleGrantRead(grant)}
+                        onToggleSelect={() => {}}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Reactions next: they are aggregate-only (no timestamps, no
                 identity), so they cannot sit in the chronological list without
                 inventing a time for them. */}
             {visibleReactions.length > 0 && (
@@ -363,7 +485,7 @@ export default function InboxView() {
 
             {/* Keyboard legend — discoverable, quiet, and only on desktop where
                 the keys actually exist. */}
-            {flat.length > 0 && (
+            {rows.length > 0 && (
               <p className="mt-6 hidden items-center justify-center gap-3 text-[11px] text-ink/30 sm:flex">
                 <Key k="J" /> <Key k="K" /> move
                 <Key k="Enter" /> open

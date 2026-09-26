@@ -18,11 +18,18 @@ export const revalidate = 0;
  * The handler itself is shared with the unarchive route — see
  * lib/api/archive-route.ts for the guard and envelope.
  *
- * OWNER ONLY. That shared guard is org-scoped, so before this
- * wrapper any org `Member` could archive any folio in the workspace. The handler
- * is outside this task's scope, so the owner check is applied in front of it,
- * through the same `resolveFolioRole` the sibling folio routes use. A caller
- * with no standing gets the same 404 a missing folio gets.
+ * WHO MAY ARCHIVE. That shared guard is org-scoped, so before this wrapper any
+ * org `Member` could archive any folio in the workspace. The role check is
+ * applied in front of it, through the same `resolveFolioRole` the sibling folio
+ * routes use: a caller with no standing gets the same 404 a missing folio gets,
+ * and a caller who can see the folio but not archive it gets a 403. Since
+ * 2026-09-26 the matrix admits an `editor` collaborator to `archive` as well as
+ * an org member.
+ *
+ * The gate also hands the shared handler the org that OWNS the folio. A
+ * collaborator's own workspace is not the folio's, and the handler's org-scoped
+ * toggle would answer 404 for a folio they were just granted — the same
+ * `gate.access.folio.organization_id` the sibling routes write with.
  */
 
 const archive = createFolioArchiveRoute('archive');
@@ -31,7 +38,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const denial = await gateFolioArchive(context);
-  if (denial) return denial;
-  return archive(request, context);
+  const gate = await gateFolioArchive(context);
+  if (!gate.ok) return gate.response;
+  return archive(request, context, gate.folioOrgId ? { orgId: gate.folioOrgId } : undefined);
 }

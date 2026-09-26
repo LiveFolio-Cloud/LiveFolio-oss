@@ -34,10 +34,33 @@ import { err } from '@/lib/api/respond';
 /** Which half of the pair a route file is. */
 export type ArchiveDirection = 'archive' | 'unarchive';
 
+/**
+ * The org that owns the folio, resolved by a wrapper that already ran its own
+ * role gate.
+ *
+ * A folio archive request is the one archive path a caller can reach WITHOUT
+ * belonging to the folio's workspace: an `editor` collaborator holds a grant on
+ * the folio, and since 2026-09-26 that is exactly the access the matrix admits
+ * to `archive`. Deriving the scope from the CALLER's headers answers 404 for a
+ * folio they can plainly see — their org is their own workspace, not the
+ * folio's — so the folio route files resolve the row through the gate first and
+ * pass the org that owns it here. That is what the sibling routes do with
+ * `gate.access.folio.organization_id` (see app/api/files/[id]/route.ts).
+ *
+ * The org scope still guards the write; only WHICH org it is changes. The
+ * workspace family never passes one, and in OSS mode `orgId` stays undefined
+ * (the flat-file toggle ignores it — `isOSS` is checked before this is read).
+ */
+export interface ArchiveScope {
+  orgId: string;
+}
+
 /** A Next.js route handler taking `{ id }` from the dynamic segment. */
 type ArchiveRouteHandler = (
   request: Request,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
+  /** Folio routes only: the org the wrapper's gate resolved the folio in. */
+  scope?: ArchiveScope
 ) => Promise<Response>;
 
 interface ArchiveRouteSpec {
@@ -65,8 +88,10 @@ interface ArchiveRouteSpec {
    */
   requireAdminClient: boolean;
   /**
-   * The `lib/archive` primitive for this direction. `orgId` is undefined only
-   * in OSS flat-file mode, where `archiveFolio` ignores the scope anyway.
+   * The `lib/archive` primitive for this direction. `orgId` is undefined in two
+   * cases: OSS flat-file mode, where `archiveFolio` ignores the scope anyway,
+   * and a caller this family's gate left to the handler's own 401. When a
+   * `scope` is supplied it is the FOLIO's org, already authorized by the gate.
    */
   toggle: (id: string, orgId: string | undefined) => Promise<ArchiveState | null>;
   /** Body keys after `success` — order is preserved into the JSON response. */
@@ -94,7 +119,11 @@ function adminClientMissing(): NextResponse {
 }
 
 function createArchiveRoute(spec: ArchiveRouteSpec): ArchiveRouteHandler {
-  return async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
+  return async function POST(
+    _request: Request,
+    context: { params: Promise<{ id: string }> },
+    scope?: ArchiveScope
+  ) {
     try {
       const { id } = await context.params;
 
@@ -103,6 +132,11 @@ function createArchiveRoute(spec: ArchiveRouteSpec): ArchiveRouteHandler {
         if (spec.oss === 'reject') {
           return err('Not implemented in OSS mode.', { status: 501 });
         }
+      } else if (scope?.orgId) {
+        // Already authorized in front of this handler, and resolved on the
+        // folio: the scope is the org that owns the ROW, which is what makes a
+        // collaborator's archive land instead of 404ing on their own org.
+        orgId = scope.orgId;
       } else {
         const auth = await getAuthContext();
         if (!auth.orgId) {
@@ -166,6 +200,13 @@ const WORKSPACE_COPY = {
 
 /**
  * `POST /api/files/[id]/{archive,unarchive}` — hide or restore one folio.
+ *
+ * The route files wrap this with their own role gate (the funnel at
+ * app/api/files/_lib/role-gate.ts) and pass the `scope` it resolved: the org
+ * that owns the folio, which is the caller's own org for a member and the
+ * folio's org for a granted collaborator. With no scope — an identity the gate
+ * could not resolve — the handler keeps its previous behaviour and derives the
+ * org from the caller, including the 401 when there is none.
  *
  * OSS has no auth and no Supabase, so the guard falls through to the
  * flat-file `lib/archive` implementation.

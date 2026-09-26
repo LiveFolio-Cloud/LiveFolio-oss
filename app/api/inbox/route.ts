@@ -6,12 +6,21 @@
  * `reactions` columns, so this route is an aggregation + read-state join, not a
  * new store of its own.
  *
+ * The feed carries TWO things a reader did not write themselves, and the second
+ * one needs its own read (see `_lib/caller-grants.ts`):
+ * - feedback on their own folios (this route's org-scoped folio query), and
+ * - the folios OTHER people shared with them — grants, which are rows in
+ *   the granted-access records pointing at folios that belong to the sharer's
+ *   organization and are therefore invisible to the org-scoped query above.
+ *
  * Mode split (see `lib/inbox.ts` for the full rationale):
  * - **Cloud** — the watermark lives in `inbox_read_state` (per user), so the
  *   server computes and returns `unreadCount` as a number.
  * - **OSS** — single-user local instance with no server-side identity, so the
  *   server returns the raw feed with `unreadCount: null` and the browser applies
- *   its own localStorage watermark.
+ *   its own localStorage watermark. There is no grant table in a local install,
+ *   so the Cloud-only read below has no OSS counterpart and the OSS payload is
+ *   unchanged.
  */
 import { NextResponse } from 'next/server';
 import { readDB } from '@/lib/db';
@@ -22,10 +31,11 @@ import { err } from '@/lib/api/respond';
 import {
   EMPTY_WATERMARK,
   buildInbox,
-  normalizeWatermark,
   type InboxFolioInput,
   type InboxWatermark,
 } from '@/lib/inbox';
+import { loadCallerGrants } from './_lib/caller-grants';
+import { watermarkFromRow } from './_lib/read-state';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -41,7 +51,12 @@ const INBOX_COLUMNS = 'id,title,slug,status,updated_at,archived_at,comments,reac
 /** Load the caller's read-state. Missing row / unreadable table → empty
  *  watermark, i.e. everything reads as new. Fail-open on the *data* is correct
  *  here: the worst case is an inbox that shows more than it strictly needs to,
- *  never one that hides feedback. */
+ *  never one that hides feedback.
+ *
+ *  The row goes through `watermarkFromRow` rather than `normalizeWatermark`
+ *  because the stored id list carries both id namespaces — see
+ *  `_lib/read-state.ts` for why, and for why that is a bridge rather than the
+ *  intended home of the grant marks. */
 async function loadWatermark(userId: string | null): Promise<InboxWatermark> {
   if (!userId || !supabaseAdmin) return { ...EMPTY_WATERMARK };
   const { data, error } = await supabaseAdmin
@@ -50,7 +65,7 @@ async function loadWatermark(userId: string | null): Promise<InboxWatermark> {
     .eq('user_id', userId)
     .maybeSingle();
   if (error || !data) return { ...EMPTY_WATERMARK };
-  return normalizeWatermark(data);
+  return watermarkFromRow(data);
 }
 
 export async function GET() {
@@ -125,7 +140,12 @@ export async function GET() {
     });
 
     const watermark = await loadWatermark(userId);
-    const feed = buildInbox(folios, watermark);
+    // The caller's own shares. Read separately from `folios` and deliberately:
+    // a granted folio belongs to the SHARER's org, so nothing the org-scoped
+    // query above can return would produce a row for it. Active grants only —
+    // see `_lib/caller-grants.ts`.
+    const grants = await loadCallerGrants(userId);
+    const feed = buildInbox(folios, watermark, grants);
 
     // The watermark rides along so a client mutation can merge against the true
     // server state instead of reconstructing (and guessing at) it. It is the

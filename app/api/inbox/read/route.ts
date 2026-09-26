@@ -1,14 +1,34 @@
 /**
  * `POST /api/inbox/read` — advance the read watermark.
  *
- * Body is a PARTIAL watermark (either field may be omitted):
+ * Body is a PARTIAL watermark, plus an explicit un-read instruction for each id
+ * namespace (every field may be omitted):
  *
- *   { lastCommentSeenAt?: string | null, reactionSeen?: { [folioId]: { [emoji]: number } } }
+ *   {
+ *     lastCommentSeenAt?: string | null,
+ *     seenCommentIds?: string[],
+ *     seenGrantIds?: string[],                       // share rows, by namespaced id
+ *     reactionSeen?: { [folioId]: { [emoji]: number } },
+ *     unreadCommentIds?: string[],                   // REMOVE from the comment set
+ *     unreadGrantIds?: string[]                      // REMOVE from the grant set
+ *   }
  *
  * Cloud upserts it into `inbox_read_state` (ratcheting — see
  * `mergeWatermark`: reaction counts only ever move up, so a stale client cannot
  * resurrect a delta the user already dismissed). OSS is a 200 no-op because the
  * browser owns its own watermark in localStorage.
+ *
+ * Two details that are not obvious from the body shape:
+ *
+ * - **Removal travels separately, in both namespaces.** The merge can only add
+ *   (that union is what stops a stale client resurrecting dismissed items), so
+ *   "mark unread" arrives as an explicit removal list. A share row is removed by
+ *   id exactly as a comment is; the comment boundary cannot express either.
+ * - **The stored id list holds both namespaces.** `inbox_read_state` has no
+ *   grant column, so grant marks serialize into `seen_comment_ids` and are split
+ *   back out on read — `_lib/read-state.ts` documents the bridge in full. With
+ *   no grants involved, the written value is byte-identical to what this route
+ *   wrote before share rows existed.
  */
 import { NextResponse } from 'next/server';
 import { isOSS } from '@/lib/env';
@@ -16,6 +36,14 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { getAuthContext } from '@/lib/auth';
 import { err } from '@/lib/api/respond';
 import { EMPTY_WATERMARK, applyUnread, mergeWatermark, normalizeWatermark } from '@/lib/inbox';
+import { seenCommentIdsColumn, watermarkFromRow } from '../_lib/read-state';
+
+/** One list of non-empty id strings off an untrusted body, else []. */
+function idList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
+}
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -34,12 +62,10 @@ export async function POST(request: Request) {
     // Explicit un-read: ids to REMOVE from the seen set. Merging can only add
     // (that union is what stops a stale client resurrecting dismissed items),
     // so removal is a separate, deliberate instruction rather than a side
-    // effect of the merge.
-    const unreadCommentIds = Array.isArray((body as { unreadCommentIds?: unknown })?.unreadCommentIds)
-      ? ((body as { unreadCommentIds: unknown[] }).unreadCommentIds.filter(
-          (id): id is string => typeof id === 'string' && id.length > 0,
-        ))
-      : [];
+    // effect of the merge. One list per namespace — a share row is un-read by
+    // its own id, never by moving the comment boundary.
+    const unreadCommentIds = idList((body as { unreadCommentIds?: unknown })?.unreadCommentIds);
+    const unreadGrantIds = idList((body as { unreadGrantIds?: unknown })?.unreadGrantIds);
 
     if (isOSS) {
       // Single-user local instance: no server-side identity to key read-state
@@ -84,17 +110,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, watermark: patch, persisted: false });
     }
 
-    const current = existing ? normalizeWatermark(existing) : { ...EMPTY_WATERMARK };
+    // `watermarkFromRow` (not `normalizeWatermark`): the stored id list holds
+    // both namespaces and has to be split before the merge, or a grant mark
+    // would be treated as a comment id — and a moved boundary would then clear
+    // it. See `_lib/read-state.ts`.
+    const current = existing ? watermarkFromRow(existing) : { ...EMPTY_WATERMARK };
     const merged = applyUnread(mergeWatermark(current, patch), unreadCommentIds);
+
+    const removeGrants = new Set(unreadGrantIds);
+    // Removal is deliberate and explicit, so it happens AFTER the union merge —
+    // otherwise the merge's own grant union would simply put the id back.
+    const next = removeGrants.size > 0
+      ? { ...merged, seenGrantIds: (merged.seenGrantIds ?? []).filter((id) => !removeGrants.has(id)) }
+      : merged;
 
     const { error: writeError } = await supabaseAdmin
       .from('inbox_read_state')
       .upsert(
         {
           user_id: userId,
-          last_comment_seen_at: merged.lastCommentSeenAt,
-          seen_comment_ids: merged.seenCommentIds,
-          reaction_seen: merged.reactionSeen,
+          last_comment_seen_at: next.lastCommentSeenAt,
+          seen_comment_ids: seenCommentIdsColumn(next),
+          reaction_seen: next.reactionSeen,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'user_id' },
@@ -104,10 +141,10 @@ export async function POST(request: Request) {
       console.error(
         `[inbox/read] failed to persist read-state (${writeError.message}) — has the inbox_read_state migration been applied? Serving non-persistent read-state.`,
       );
-      return NextResponse.json({ success: true, watermark: merged, persisted: false });
+      return NextResponse.json({ success: true, watermark: next, persisted: false });
     }
 
-    return NextResponse.json({ success: true, watermark: merged, persisted: true });
+    return NextResponse.json({ success: true, watermark: next, persisted: true });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- catch-all handler: err may be any thrown value; err.message is read
   } catch (error: any) {
     return err(error.message || 'Failed to update inbox read state.', { status: 500 });

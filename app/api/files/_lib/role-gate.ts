@@ -63,6 +63,30 @@ export function can(role: FolioRole, _capability?: FolioCapability): boolean {
   return role === 'owner';
 }
 
+/**
+ * The facts the hosted build's delete decision needs beyond the standing.
+ *
+ * There is no workspace, no org role and nobody to share with here; the shape
+ * is declared so the funnel's export surface is the same in both trees.
+ */
+export interface DeleteContext {
+  orgRole?: string | null;
+  userId?: string | null;
+  createdBy?: string | null;
+}
+
+/**
+ * May this caller delete this folio?
+ *
+ * The operator is the only account on the install and owns every folio on the
+ * disk, so the answer is the same one `can` gives — `owner` means yes, any
+ * other standing no. Nothing else is consulted: there is no `created_by` to
+ * compare against and no org role to weigh.
+ */
+export function canDeleteFolio(role: FolioRole, _ctx?: DeleteContext): boolean {
+  return role === 'owner';
+}
+
 /** The owner may write any field a route asks about; the field list is the route's. */
 export function canWriteField(role: FolioRole, _field?: string): boolean {
   return role === 'owner';
@@ -146,9 +170,25 @@ export function partitionWritableFields(
   return { blocked: new Set<string>(), stripped: [] };
 }
 
-/** Always proceeds: the operator may archive and restore their own folios. */
+/**
+ * What the archive wrapper learned: proceed (carrying the org that owns the
+ * folio), or the finished refusal. The refusal arm is never produced here — it
+ * exists so the exported shape matches the hosted funnel the routes are written
+ * against.
+ */
+export type ArchiveGate =
+  | { ok: true; folioOrgId: string | null }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Always proceeds: the operator may archive and restore their own folios.
+ *
+ * The hosted gate resolves the folio and reports the org that owns it so the
+ * shared archive handler can scope its write; there is no org to report here,
+ * and `lib/archive.ts`'s flat-file branch ignores the scope anyway.
+ */
 export async function gateFolioArchive(_context: {
   params: Promise<{ id: string }>;
-}): Promise<NextResponse | null> {
-  return null;
+}): Promise<ArchiveGate> {
+  return { ok: true, folioOrgId: null };
 }

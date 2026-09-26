@@ -15,6 +15,7 @@
  *         {
  *           lastCommentSeenAt: string | null,            // boundary ("mark all")
  *           seenCommentIds:   string[],                  // individual marks (capped)
+ *           seenGrantIds:     string[],                  // individual marks (capped)
  *           reactionSeen:     { [folioId]: { [emoji]: number } }
  *         }
  *
@@ -31,6 +32,21 @@
  *     timestamps — the stored shape is a plain `{emoji: count}` map), so they can be neither ordered
  *     nor individually identified. Storing the last-seen count per (folio,
  *     emoji) turns "3 more 👍 since you looked" into a subtraction.
+ *
+ *     A grant is read by ID alone, and is deliberately immune to the comment
+ *     boundary: `lastCommentSeenAt` means "I have seen the feedback up to
+ *     here", and someone else's new share is not feedback. The two namespaces
+ *     never cross — a share never marks a comment read, and a comment arriving
+ *     never silently swallows a share row.
+ *
+ * **A third row kind: the grant.** This feed is DERIVED, not an event log —
+ * there is no events table, and nothing writes a row when something happens.
+ * `buildInbox` recomputes on read, so the granted-access row *is* the
+ * event: "X shared a folio with you" is a projection of an ACTIVE grant, in
+ * exactly the way a comment item is a projection of a comment. A grant row is
+ * built from the folio's TITLE and the sharer's NAME — `InboxGrantInput`
+ * carries no address field at all, and a display name that looks like one is
+ * reduced to the part a person reads (`sharerDisplayName`).
  *
  * Cloud persists this in the `inbox_read_state` table; OSS keeps it in
  * localStorage (`readOssWatermark`/`writeOssWatermark`) because it is a
@@ -54,6 +70,17 @@ export const INBOX_EMOJI = ['👍', '❤️', '💡', '🔥'] as const;
  * an old comment, and the worst case is that one old row reads as new again.
  */
 export const MAX_SEEN_COMMENT_IDS = 500;
+
+/**
+ * Cap on individually-marked grant ids.
+ *
+ * Much lower than the comment cap on purpose: a person's grants are bounded by
+ * the seats the workspaces sharing with them have bought (a handful, not
+ * hundreds), so 200 is already generous headroom. Eviction is FIFO and the
+ * failure mode is the same benign one — an evicted id belongs to an old share,
+ * and the worst case is that one old row reads as new again.
+ */
+export const MAX_SEEN_GRANT_IDS = 200;
 
 /**
  * The minimal folio shape both modes can produce. Cloud maps rows from
@@ -113,25 +140,140 @@ export interface InboxReactionDelta {
   delta: number;
 }
 
+/**
+ * One grant, as the feed sees it.
+ *
+ * `id` is `grant:<grantId>` — the folio's collaborator-row id, namespaced the
+ * way a comment item is namespaced by its folio. The prefix is load-bearing:
+ * `unreadIds` mixes comment ids, grant ids and reaction ids in one flat list,
+ * and a raw grant id must never be mistaken for a comment id
+ * by a read-state mutation.
+ */
+export interface InboxGrantItem {
+  /** Discriminant — a grant row is deliberately NOT an `InboxCommentItem`. */
+  kind: 'grant';
+  id: string;
+  /** The granted-access record this row is a projection of. */
+  grantId: string;
+  folioId: string;
+  folioTitle: string;
+  /** Where clicking the row goes — the folio itself, not a pin. */
+  href: string;
+  /** The sharer's display name. Never an address (see `sharerDisplayName`). */
+  sharer: string;
+  /** The role the grant was extended at, as the share menu names it. */
+  role: InboxGrantRole;
+  /** Display label for that role — "Can edit". */
+  roleLabel: string;
+  /** When access began (the grant's `accepted_at`, else its `created_at`). */
+  createdAt: string;
+}
+
+/** Any row the Inbox renders in its chronological list. Discriminated by
+ *  `kind` (`'pin' | 'comment'` are the comment items, `'grant'` the shares). */
+export type InboxItem = InboxCommentItem | InboxGrantItem;
+
+/**
+ * The three roles a grant row can carry — mirrors the CHECK constraint on
+ * the shared-access role vocabulary.
+ *
+ * Duplicated here rather than imported from `lib/collaborators`: that module is
+ * the Cloud-only grant engine and does not exist in the self-hosted tree, while
+ * this file ships to both. The vocabulary is three strings; the coupling of a
+ * cross-boundary import would cost more than the duplication.
+ */
+export type InboxGrantRole = 'viewer' | 'commenter' | 'editor';
+
+/** Every grant role, for runtime validation of a value off the wire. */
+export const INBOX_GRANT_ROLES: readonly InboxGrantRole[] = ['viewer', 'commenter', 'editor'];
+
+/**
+ * One grant as the Inbox API hands it over — the recipient's OWN rows only.
+ *
+ * Produced by the caller: `GET /api/inbox` maps the caller's own
+ * granted-access rows (joined to their folios) into this shape. It has
+ * no `invited_email` field, and the row that comes out the other side has
+ * nowhere to put one — the shared folio's TITLE and the sharer's display NAME
+ * are the whole vocabulary of a share row.
+ */
+export interface InboxGrantInput {
+  /** The granted-access record's id. */
+  id: string;
+  folioId: string;
+  folioTitle?: string | null;
+  folioSlug?: string | null;
+  /** The folio's publish state — decides whether the row links to the viewer
+   *  or to the in-app editor. */
+  folioStatus?: string | null;
+  /** Archived folios are excluded, exactly as they are for feedback. */
+  folioArchivedAt?: string | null;
+  /** The sharer's display name. An address here is reduced to its local part. */
+  sharerName?: string | null;
+  role?: string | null;
+  /**
+   * The grant's lifecycle. ONLY `'active'` produces a row — see
+   * `grantRowFor`. Missing or unknown fails closed, so a caller that forgets to
+   * map this field gets no row rather than a row claiming access that may not
+   * exist.
+   */
+  status?: string | null;
+  /** When access began. Falls back to `createdAt`. */
+  acceptedAt?: string | null;
+  /** When the grant row was written. */
+  createdAt?: string | null;
+}
+
 export interface InboxWatermark {
   /** Boundary set by "mark all as read" — everything at or before this instant. */
   lastCommentSeenAt: string | null;
   /** Ids marked read one at a time (capped at MAX_SEEN_COMMENT_IDS). */
   seenCommentIds: string[];
+  /**
+   * Grant ids marked read one at a time (capped at MAX_SEEN_GRANT_IDS).
+   *
+   * OPTIONAL, and that is the whole migration story: watermarks written before
+   * grant rows existed (every row in `inbox_read_state` today, and every OSS
+   * localStorage blob) simply lack the key, and `normalizeWatermark` fills it
+   * with an empty list. No schema change, no backfill, and an old client
+   * writing a body without the field cannot break a new one.
+   */
+  seenGrantIds?: string[];
   reactionSeen: Record<string, Record<string, number>>;
+}
+
+/**
+ * A watermark as `normalizeWatermark` produces it: every list present.
+ *
+ * Public `InboxWatermark` keeps `seenGrantIds` optional so stored/older shapes
+ * stay assignable; every function here normalizes first and can then index it
+ * without a guard.
+ */
+export interface NormalizedInboxWatermark extends InboxWatermark {
+  seenGrantIds: string[];
 }
 
 export interface InboxFeed {
   items: InboxCommentItem[];
   reactions: InboxReactionDelta[];
-  /** Ids (of items and reaction rows) the user has not seen yet. */
+  /**
+   * Share rows, newest first. OPTIONAL so an `InboxFeed` literal written before
+   * grant rows existed still satisfies the type — the same backwards-compatible
+   * move as `seenGrantIds` above. `buildInbox`, `resolveFeed` and
+   * `recomputeOssFeed` always produce it.
+   */
+  grants?: InboxGrantItem[];
+  /** Ids (of items, reaction rows and grant rows) the user has not seen yet. */
   unreadIds: string[];
   unreadCount: number;
 }
 
-export const EMPTY_WATERMARK: InboxWatermark = {
+/** Nothing marked read, every list present — the value `normalizeWatermark`
+ *  falls back to, and the value a caller starts from. Typed as the NORMALIZED
+ *  shape so spreading it always satisfies a `NormalizedInboxWatermark`. */
+export const EMPTY_WATERMARK: NormalizedInboxWatermark = {
   lastCommentSeenAt: null,
   seenCommentIds: [],
+  seenGrantIds: [],
   reactionSeen: {},
 };
 
@@ -189,9 +331,18 @@ export function formatRelativeTime(iso?: string | null): string {
  *  numeric suffix-free rule the id encodes: `${folioId}:${commentId}` has no
  *  ordering information, so FIFO by array position (oldest first) is kept —
  *  callers push, this trims the head. */
-function capSeenIds(ids: string[]): string[] {
+function capSeenIds(ids: string[], cap: number = MAX_SEEN_COMMENT_IDS): string[] {
   const unique = uniqueStrings(ids);
-  return unique.length > MAX_SEEN_COMMENT_IDS ? unique.slice(unique.length - MAX_SEEN_COMMENT_IDS) : unique;
+  return unique.length > cap ? unique.slice(unique.length - cap) : unique;
+}
+
+/** One string-id list out of a stored/raw value, dropping anything unusable and
+ *  capping the tail. Shared by the comment and grant sets so their defences
+ *  cannot drift apart. */
+function coerceSeenIds(value: unknown, cap: number): string[] {
+  return Array.isArray(value)
+    ? capSeenIds(value.filter((id): id is string => typeof id === 'string' && id.length > 0), cap)
+    : [];
 }
 
 /**
@@ -209,19 +360,27 @@ function uniqueStrings(values: string[]): string[] {
   return out;
 }
 
-/** Coerce anything (DB row, localStorage JSON, request body) into a valid watermark. */
-export function normalizeWatermark(raw: unknown): InboxWatermark {
+/**
+ * Coerce anything (DB row, localStorage JSON, request body) into a valid
+ * watermark. Never throws, never returns null, and tolerates every shape that
+ * has ever been stored — including one written before grant rows existed,
+ * which simply has no `seenGrantIds` and gets an empty list.
+ */
+export function normalizeWatermark(raw: unknown): NormalizedInboxWatermark {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_WATERMARK };
   const r = raw as {
     lastCommentSeenAt?: unknown;
     last_comment_seen_at?: unknown;
     seenCommentIds?: unknown;
     seen_comment_ids?: unknown;
+    seenGrantIds?: unknown;
+    seen_grant_ids?: unknown;
     reactionSeen?: unknown;
     reaction_seen?: unknown;
   };
   const last = r.lastCommentSeenAt ?? r.last_comment_seen_at;
   const seenIdsRaw = r.seenCommentIds ?? r.seen_comment_ids;
+  const seenGrantIdsRaw = r.seenGrantIds ?? r.seen_grant_ids;
   const seenRaw = r.reactionSeen ?? r.reaction_seen;
 
   const reactionSeen: Record<string, Record<string, number>> = {};
@@ -239,9 +398,8 @@ export function normalizeWatermark(raw: unknown): InboxWatermark {
 
   return {
     lastCommentSeenAt: typeof last === 'string' && last.length > 0 ? last : null,
-    seenCommentIds: Array.isArray(seenIdsRaw)
-      ? capSeenIds(seenIdsRaw.filter((id): id is string => typeof id === 'string' && id.length > 0))
-      : [],
+    seenCommentIds: coerceSeenIds(seenIdsRaw, MAX_SEEN_COMMENT_IDS),
+    seenGrantIds: coerceSeenIds(seenGrantIdsRaw, MAX_SEEN_GRANT_IDS),
     reactionSeen,
   };
 }
@@ -256,8 +414,20 @@ export function normalizeWatermark(raw: unknown): InboxWatermark {
  * - seen ids union,
  * - reaction counts take the max of old/new (so a stale client cannot resurrect
  *   a delta the user already dismissed).
+ *
+ * The two id sets are unioned independently, and that is not symmetry for its
+ * own sake: the boundary is a COMMENT concept, so a moved boundary retires the
+ * comment id list but must leave `seenGrantIds` alone. A "mark all as read"
+ * therefore still has to name every grant it covered (see `markAllRead`) —
+ * otherwise the next merge would resurrect exactly the shares it just closed.
  */
 export function mergeWatermark(current: InboxWatermark, patch: InboxWatermark): InboxWatermark {
+  // The grant lists are read through the normalizer because they are optional
+  // on the public shape — a watermark stored before grant rows existed has no
+  // list, and a merge against it must union with "empty", not crash.
+  const currentSeen = normalizeWatermark(current);
+  const patchSeen = normalizeWatermark(patch);
+
   const reactionSeen: Record<string, Record<string, number>> = {};
   const folioIds = uniqueStrings([...Object.keys(current.reactionSeen), ...Object.keys(patch.reactionSeen)]);
   for (const folioId of folioIds) {
@@ -279,6 +449,8 @@ export function mergeWatermark(current: InboxWatermark, patch: InboxWatermark): 
     // "Mark all" supersedes individual marks — when the boundary moved, the
     // explicit id list has done its job and is dropped rather than carried.
     seenCommentIds: patchT > currentT ? [] : capSeenIds([...current.seenCommentIds, ...patch.seenCommentIds]),
+    // Grants have no boundary to be superseded by, so this list only grows.
+    seenGrantIds: capSeenIds([...currentSeen.seenGrantIds, ...patchSeen.seenGrantIds], MAX_SEEN_GRANT_IDS),
     reactionSeen,
   };
 }
@@ -311,8 +483,137 @@ export function isCommentUnread(
   return parseTime(comment.createdAt) > parseTime(watermark.lastCommentSeenAt);
 }
 
+/* ── grants ──────────────────────────────────────────────────────────── */
+
 /**
- * Build the inbox feed from the caller's folios.
+ * The one string the module will accept as a sharer's name.
+ *
+ * A display name is not identity, and an inbox row is a place an address must
+ * never surface: the row is read over a shoulder, screenshotted and shared, and
+ * the reader already knows who shared with them. The rule is therefore
+ * structural — `InboxGrantInput` has no address field, and anything that still
+ * *looks* like an address is reduced to the part a person reads (the local
+ * part, which is also what the invite mail shows as the inviter's name).
+ *
+ * Never returns '': a row with an empty author slot would render as a bare
+ * "shared a folio with you" with no actor, so the fallback is `Someone`, the
+ * same word the row component uses for a nameless commenter.
+ */
+export function sharerDisplayName(value: unknown): string {
+  if (typeof value !== 'string') return 'Someone';
+  const trimmed = value.trim();
+  if (!trimmed) return 'Someone';
+  const at = trimmed.indexOf('@');
+  // Everything before the '@' — the domain never survives, so no row this
+  // module builds can carry a routable address.
+  const localPart = (at === -1 ? trimmed : trimmed.slice(0, at)).trim();
+  return localPart.length > 0 ? localPart : 'Someone';
+}
+
+/** Display label for a grant role — the share menu's own vocabulary, so the
+ *  owner who picked "Can edit" and the collaborator who reads it agree. */
+const GRANT_ROLE_LABELS: Readonly<Record<InboxGrantRole, string>> = {
+  viewer: 'Can view',
+  commenter: 'Can comment',
+  editor: 'Can edit',
+};
+
+/** Runtime membership test for the grant role union — fails closed. */
+export function isInboxGrantRole(value: unknown): value is InboxGrantRole {
+  return typeof value === 'string' && (INBOX_GRANT_ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * Project one grant row into an inbox row, or `null` when it must not appear.
+ *
+ * Returning `null` rather than throwing is the module's usual posture, and here
+ * it also carries the access rule: a row is a claim that the reader has access,
+ * so every way of being unsure resolves to "no row":
+ *
+ * - **Only `status === 'active'` produces a row.** Pending is not access yet
+ *   (the invitee may never accept, and the seat is not theirs); revoked is not
+ *   access at all. Anything else — a missing status, a future value — is
+ *   treated the same way. The route is expected to filter too; this is the
+ *   second lock on the same door, and the one the unit tests pin.
+ * - **An unknown role produces no row.** The role is what the row promises the
+ *   reader they may do; a role this module cannot label is a promise it cannot
+ *   keep, and guessing at it would be worse than silence.
+ * - **An archived folio produces no row**, matching the feedback rules above —
+ *   the shelf is out of the way, and the link would dead-end at a folio only an
+ *   owner can open.
+ * - **A row with no grant id or no folio id produces no row**: without them
+ *   there is no stable identity to mark read and no page to open.
+ */
+export function grantRowFor(grant: InboxGrantInput): InboxGrantItem | null {
+  if (!grant || typeof grant !== 'object') return null;
+  if (!grant.id || !grant.folioId) return null;
+  if (grant.status !== 'active') return null;
+  if (!isInboxGrantRole(grant.role)) return null;
+  if (grant.folioArchivedAt) return null;
+
+  const { href } = hrefFor({
+    id: grant.folioId,
+    title: grant.folioTitle ?? '',
+    slug: grant.folioSlug ?? null,
+    status: grant.folioStatus ?? 'published',
+  });
+
+  return {
+    kind: 'grant',
+    id: `grant:${grant.id}`,
+    grantId: grant.id,
+    folioId: grant.folioId,
+    folioTitle: grant.folioTitle || 'Untitled',
+    href,
+    sharer: sharerDisplayName(grant.sharerName),
+    role: grant.role,
+    roleLabel: GRANT_ROLE_LABELS[grant.role],
+    // Access began when the grant was accepted; a grant bound straight to an
+    // existing account is written active with `accepted_at` set, so the
+    // fallback only covers a row that predates that write.
+    createdAt: firstTime(grant.acceptedAt) ?? firstTime(grant.createdAt) ?? '',
+  };
+}
+
+/** The first non-empty string of a candidate pair, else null. */
+function firstTime(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+/**
+ * True when this grant reads as unread under the watermark.
+ *
+ * By id alone, deliberately: the comment boundary means "I have seen the
+ * feedback up to here", and a shared folio is not feedback. Sharing a folio
+ * with someone must not mark their older comments read, and their next comment
+ * must not silently swallow the share row.
+ */
+export function isGrantUnread(grant: { id: string }, watermark: InboxWatermark): boolean {
+  // `?? []` and not a normalize call: this runs once per grant row in the hot
+  // path, and the only field at risk here is the one that is optional by design.
+  const seen = watermark.seenGrantIds ?? [];
+  return !seen.includes(grant.id);
+}
+
+/**
+ * Case-insensitive search over the three things a share row can be found by:
+ * who shared it, which folio, and what it lets you do. There is no comment text
+ * and no pinned element on a grant row, so those arms of `searchItems` have no
+ * counterpart here.
+ */
+export function grantMatchesQuery(grant: InboxGrantItem, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    grant.sharer.toLowerCase().includes(q) ||
+    grant.folioTitle.toLowerCase().includes(q) ||
+    grant.roleLabel.toLowerCase().includes(q)
+  );
+}
+
+/**
+ * Build the inbox feed from the caller's folios (and, for a collaborator, the
+ * grants that were extended to them).
  *
  * Rules that matter for how the inbox *feels*:
  * - **Archived folios are excluded entirely.** Archiving is the "out of the way,
@@ -322,12 +623,31 @@ export function isCommentUnread(
  * - **Replies are included** (they carry `parentId`) but flagged, so the UI can
  *   render them as part of a thread.
  * - **Reaction rows only exist when something new arrived** (delta > 0).
+ * - **Grant rows exist only for ACTIVE grants** — see `grantRowFor` for the
+ *   complete list of ways a grant fails to become a row.
+ *
+ * `grants` defaults to empty, which is the whole backwards-compatibility
+ * contract: every caller written before share rows existed — the owner who has
+ * no grants, the self-hosted install with no grant table at all — builds the
+ * identical feed it built before, because the loop simply has nothing to add.
  */
-export function buildInbox(folios: InboxFolioInput[], watermark: InboxWatermark): InboxFeed {
+export function buildInbox(
+  folios: InboxFolioInput[],
+  watermark: InboxWatermark,
+  grants: InboxGrantInput[] = [],
+): InboxFeed {
   const seen = normalizeWatermark(watermark);
 
   const items: InboxCommentItem[] = [];
   const reactions: InboxReactionDelta[] = [];
+  const grantItems: InboxGrantItem[] = [];
+
+  for (const grant of grants) {
+    // Malformed entries are skipped, not thrown on — a grant the route could
+    // not fully map must not take the whole feed down with it.
+    const row = grantRowFor(grant);
+    if (row) grantItems.push(row);
+  }
 
   for (const folio of folios) {
     if (folio.archivedAt) continue;
@@ -382,6 +702,9 @@ export function buildInbox(folios: InboxFolioInput[], watermark: InboxWatermark)
 
   // Newest first — the whole point of an inbox.
   items.sort((a, b) => parseTime(b.createdAt) - parseTime(a.createdAt));
+  // Shares read newest first, like the feedback above. Same comparator, so the
+  // two lists can never disagree about which end is "new".
+  grantItems.sort((a, b) => parseTime(b.createdAt) - parseTime(a.createdAt));
   // Reactions have no timestamps; order by delta size (biggest response first),
   // then by folio title for a stable, non-flickering list.
   reactions.sort((a, b) => b.delta - a.delta || a.folioTitle.localeCompare(b.folioTitle));
@@ -389,9 +712,10 @@ export function buildInbox(folios: InboxFolioInput[], watermark: InboxWatermark)
   const unreadIds = [
     ...items.filter((i) => isCommentUnread({ id: i.commentId, createdAt: i.createdAt, resolved: i.resolved }, seen)).map((i) => i.id),
     ...reactions.map((r) => r.id),
+    ...grantItems.filter((g) => isGrantUnread(g, seen)).map((g) => g.id),
   ];
 
-  return { items, reactions, unreadIds, unreadCount: unreadIds.length };
+  return { items, reactions, grants: grantItems, unreadIds, unreadCount: unreadIds.length };
 }
 
 /** The unread subset of a feed — what the sidebar badge and the page header count. */
@@ -417,6 +741,7 @@ export function unreadFromFeed(feed: InboxFeed, watermark: InboxWatermark): stri
     ...feed.reactions
       .filter((r) => r.count > (seen.reactionSeen[r.folioId]?.[r.emoji] ?? 0))
       .map((r) => r.id),
+    ...(feed.grants ?? []).filter((g) => isGrantUnread(g, seen)).map((g) => g.id),
   ];
 }
 
@@ -465,6 +790,34 @@ export function applyUnread(watermark: InboxWatermark, commentIds: string[]): In
   };
 }
 
+/**
+ * Record ONE share row as read. Adds its id, exactly as `markItemRead` does for
+ * a comment — and, like it, never touches the comment boundary.
+ *
+ * Takes the row rather than a bare id so the two read-state entry points have
+ * the same shape; the id it stores is the NAMESPACED one (`grant:<grantId>`),
+ * which is what a feed's `unreadIds` carries.
+ */
+export function markGrantRead(watermark: InboxWatermark, grant: InboxGrantItem): InboxWatermark {
+  const current = normalizeWatermark(watermark);
+  if (current.seenGrantIds.includes(grant.id)) return current;
+  return {
+    ...current,
+    seenGrantIds: capSeenIds([...current.seenGrantIds, grant.id], MAX_SEEN_GRANT_IDS),
+  };
+}
+
+/** Undo a read on a share row — the deliberate removal route, mirroring
+ *  `markItemUnread`. Nothing else can un-read a grant, because a union merge
+ *  only ever adds. */
+export function markGrantUnread(watermark: InboxWatermark, grant: InboxGrantItem): InboxWatermark {
+  const current = normalizeWatermark(watermark);
+  return {
+    ...current,
+    seenGrantIds: current.seenGrantIds.filter((id) => id !== grant.id),
+  };
+}
+
 /** Record one reaction row as read by storing its current count. */
 export function markReactionRead(watermark: InboxWatermark, delta: InboxReactionDelta): InboxWatermark {
   const current = normalizeWatermark(watermark);
@@ -478,12 +831,21 @@ export function markReactionRead(watermark: InboxWatermark, delta: InboxReaction
 }
 
 /**
- * Mark the whole feed read: the boundary jumps to the newest item present and
- * every reaction row records its current count.
+ * Mark the whole feed read: the boundary jumps to the newest item present,
+ * every reaction row records its current count, and every share row is named
+ * in `seenGrantIds`.
  *
  * "Newest item present" (max createdAt) rather than `new Date()` on purpose — a
  * client clock running fast would otherwise silently mark future feedback read
  * the next time the feed loads.
+ *
+ * Share rows are recorded BY ID, and deliberately do not take part in the
+ * boundary computation. Two reasons, and they point the same way: a boundary
+ * includes everything at or before its instant, so letting a share set it would
+ * mark every older COMMENT read (a share is not feedback, and it must not close
+ * feedback); and a share that merely arrived earlier than the boundary would
+ * otherwise be impossible to leave unread. Ids cost a few bytes and keep the
+ * two namespaces independent.
  */
 export function markAllRead(watermark: InboxWatermark, feed: InboxFeed): InboxWatermark {
   const current = normalizeWatermark(watermark);
@@ -502,10 +864,16 @@ export function markAllRead(watermark: InboxWatermark, feed: InboxFeed): InboxWa
     reactionSeen[delta.folioId] = { ...(reactionSeen[delta.folioId] ?? {}), [delta.emoji]: delta.count };
   }
 
+  const grantIds = (feed.grants ?? []).map((g) => g.id);
+
   return {
     lastCommentSeenAt: newestIso ?? null,
     // The boundary now covers everything listed; individual marks are redundant.
     seenCommentIds: [],
+    // Grants are NOT covered by that reasoning (see above), so "mark all" names
+    // each one it just closed. Unioned rather than replaced, so a share row
+    // already marked read — or on a folio no longer in this feed — stays read.
+    seenGrantIds: capSeenIds([...current.seenGrantIds, ...grantIds], MAX_SEEN_GRANT_IDS),
     reactionSeen,
   };
 }
@@ -586,6 +954,9 @@ export function parsePinFocusParam(urlOrSearch: string | null | undefined): stri
 export interface InboxApiResponse {
   items: InboxCommentItem[];
   reactions: InboxReactionDelta[];
+  /** Share rows — absent from a response written before they existed, and from
+   *  any install with no grant table. */
+  grants?: InboxGrantItem[];
   unreadIds: string[];
   /** null in OSS — no server-side identity there, so the browser computes it. */
   unreadCount: number | null;
@@ -605,6 +976,7 @@ export function resolveFeed(response: InboxApiResponse, localWatermark: InboxWat
     return {
       items: Array.isArray(response.items) ? response.items : [],
       reactions: Array.isArray(response.reactions) ? response.reactions : [],
+      grants: Array.isArray(response.grants) ? response.grants : [],
       unreadIds: Array.isArray(response.unreadIds) ? response.unreadIds : [],
       unreadCount: response.unreadCount,
     };
@@ -617,6 +989,7 @@ export function recomputeOssFeed(response: InboxApiResponse, localWatermark: Inb
   const seen = normalizeWatermark(localWatermark);
   const items = Array.isArray(response.items) ? response.items : [];
   const allReactions = Array.isArray(response.reactions) ? response.reactions : [];
+  const grants = Array.isArray(response.grants) ? response.grants : [];
 
   const reactions = allReactions
     .map((r) => {
@@ -630,7 +1003,8 @@ export function recomputeOssFeed(response: InboxApiResponse, localWatermark: Inb
       .filter((i) => isCommentUnread({ id: i.commentId, createdAt: i.createdAt, resolved: i.resolved }, seen))
       .map((i) => i.id),
     ...reactions.map((r) => r.id),
+    ...grants.filter((g) => isGrantUnread(g, seen)).map((g) => g.id),
   ];
 
-  return { items, reactions, unreadIds, unreadCount: unreadIds.length };
+  return { items, reactions, grants, unreadIds, unreadCount: unreadIds.length };
 }

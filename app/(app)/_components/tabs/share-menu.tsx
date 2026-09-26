@@ -2,8 +2,8 @@
 
 /**
  * Share menu — SHARE-only controls: the share link (copy/open), publish/
- * unpublish, privacy toggles (private + access key, comments, presentation
- * mode) and collaborators. Paid gating lives under the Access ($) header
+ * unpublish, privacy toggles (secure folio + its access key, comments,
+ * presentation mode) and collaborators. Paid gating lives under the Access ($) header
  * menu; marketplace listing under the Marketplace (storefront) menu — this
  * panel stays focused on who can see the folio and how it's shared.
  */
@@ -168,8 +168,7 @@ export function ShareMenu({
 
   // Privacy/sharing toggles — keys are literal HTMLFile field names so the
   // optimistic reads/writes below stay type-safe.
-  const shareToggles: { key: 'isPrivate' | 'allowComments' | 'presentationModeOnly'; label: string }[] = [
-    { key: 'isPrivate', label: 'Private folio' },
+  const shareToggles: { key: 'allowComments' | 'presentationModeOnly'; label: string }[] = [
     { key: 'allowComments', label: 'Allow comments' },
     { key: 'presentationModeOnly', label: 'Presentation mode' },
   ];
@@ -228,38 +227,51 @@ export function ShareMenu({
           />
         </div>
 
+        {/* Secure folio — the access key is part of this control, so it renders
+            nested under the toggle rather than trailing the toggle list. */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[13px] font-medium text-ink">Secure folio</span>
+            <Toggle
+              checked={Boolean(folio?.isPrivate)}
+              onChange={() => put('isPrivate', !folio?.isPrivate)}
+              disabled={saving}
+            />
+          </div>
+
+          {folio?.isPrivate && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-ink/50">Access key</label>
+                <button
+                  type="button"
+                  onClick={() => saveAccessKey(randomAccessKey())}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-[var(--app-accent)] hover:underline"
+                >
+                  <RefreshCw size={10} />
+                  Regenerate
+                </button>
+              </div>
+              <input
+                value={folio?.accessKey || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFolio({ ...folio, accessKey: val });
+                  saveAccessKey(val);
+                }}
+                className="h-8 w-full border-0 border-b border-[#0F0F0D]/10 dark:border-[#F4F4F0]/10 bg-transparent px-0.5 text-[13px] text-ink placeholder:text-ink/50 focus:border-b-2 focus:border-[var(--app-accent)] focus:outline-none transition-colors"
+                placeholder="No access key set"
+              />
+            </div>
+          )}
+        </div>
+
         {shareToggles.map(({ key, label }) => (
           <div key={key} className="flex items-center justify-between gap-3">
             <span className="text-[13px] font-medium text-ink">{label}</span>
             <Toggle checked={Boolean(folio?.[key])} onChange={() => put(key, !folio?.[key])} disabled={saving} />
           </div>
         ))}
-
-        {folio?.isPrivate && (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-bold text-ink/50">Access key</label>
-              <button
-                type="button"
-                onClick={() => saveAccessKey(randomAccessKey())}
-                className="flex items-center gap-1 text-[11px] font-semibold text-[var(--app-accent)] hover:underline"
-              >
-                <RefreshCw size={10} />
-                Regenerate
-              </button>
-            </div>
-            <input
-              value={folio?.accessKey || ''}
-              onChange={(e) => {
-                const val = e.target.value;
-                setFolio({ ...folio, accessKey: val });
-                saveAccessKey(val);
-              }}
-              className="h-8 w-full border-0 border-b border-[#0F0F0D]/10 dark:border-[#F4F4F0]/10 bg-transparent px-0.5 text-[13px] text-ink placeholder:text-ink/50 focus:border-b-2 focus:border-[var(--app-accent)] focus:outline-none transition-colors"
-              placeholder="No access key set"
-            />
-          </div>
-        )}
 
         {/* Collaborators — Cloud only. The list, the roles and the refusals all
             come from /api/collaborators: the legacy email array on the folio is

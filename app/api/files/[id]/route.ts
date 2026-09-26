@@ -639,19 +639,22 @@ export async function DELETE(
       return NextResponse.json({ success: true });
     }
 
-    // Cloud Mode — OWNER ONLY (seam 4).
-    // This is a deliberate privilege TIGHTENING. Before this task the route
-    // contained no role check at all, and its org-scoped delete meant any
+    // Cloud Mode — THE CREATOR OR THE WORKSPACE OWNER, and nobody else
+    // (seam 4, tightened 2026-09-26).
+    // This is a deliberate privilege TIGHTENING, twice over. The route used to
+    // contain no role check at all, and its org-scoped delete meant any
     // `Member` of the workspace — not just its owner — could delete any folio
-    // in it (ARCHITECTURE.html §1). `delete` is a capability `owner` alone
-    // holds, and `owner` is reachable only through org membership, so the
-    // capability check below is the whole rule: an editor collaborator is
-    // refused, and a caller with no standing is refused with a 404 that does
-    // not confirm the folio exists.
+    // in it (ARCHITECTURE.html §1). The first pass then asked
+    // `can(role, 'delete')`, which did not help: `owner` means "an org member"
+    // here, so an Admin and a Member still held it. `gateFolio` now asks
+    // `canDeleteFolio` for this capability — the folio's creator, or the
+    // workspace's Owner — so an org Member who did not create the folio is
+    // refused, an editor collaborator is refused, and a caller with no standing
+    // is refused with a 404 that does not confirm the folio exists.
     if (!userId) return err('Unauthorized', { status: 401 });
 
     const gate = await gateFolio(userId, id, 'delete', {
-      forbidden: 'Only the folio owner can delete this folio.',
+      forbidden: 'Only the folio creator or the workspace owner can delete this folio.',
     });
     if (!gate.ok) return gate.response;
 

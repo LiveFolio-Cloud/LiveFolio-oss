@@ -28,6 +28,14 @@
  *     in OSS. A failed POST leaves the optimistic state in place; the next poll
  *     reconciles, and the worst case is a badge that reappears.
  *
+ * It carries both feed kinds the same way. Feedback rows and **share rows**
+ * ("X shared a folio with you", `InboxGrantItem`) live in the same store, are
+ * unread by the same watermark, and are cleared by the same two verbs — with one
+ * asymmetry the data forces: a share is marked read BY ID only and never by the
+ * comment boundary, because the boundary means "I have seen the feedback up to
+ * here" and someone else's share is not feedback. `markGrantRead` /
+ * `markGrantUnread` are that pair; `lib/inbox.ts` documents the reasoning.
+ *
  * Failures are deliberately silent, matching `useDesignSystems`: an inbox that
  * cannot load should not toast at someone who never opened it. The badge simply
  * does not render.
@@ -38,6 +46,8 @@ import {
   EMPTY_WATERMARK,
   applyUnread,
   markAllRead as markAllReadPure,
+  markGrantRead as markGrantReadPure,
+  markGrantUnread as markGrantUnreadPure,
   markItemRead as markItemReadPure,
   markItemUnread as markItemUnreadPure,
   markReactionRead as markReactionReadPure,
@@ -48,6 +58,7 @@ import {
   type InboxApiResponse,
   type InboxCommentItem,
   type InboxFeed,
+  type InboxGrantItem,
   type InboxReactionDelta,
   type InboxWatermark,
 } from '@/lib/inbox';
@@ -60,7 +71,12 @@ interface InboxStore {
   isLoading: boolean;
 }
 
-const EMPTY_FEED: InboxFeed = { items: [], reactions: [], unreadIds: [], unreadCount: 0 };
+const EMPTY_FEED: InboxFeed = { items: [], reactions: [], grants: [], unreadIds: [], unreadCount: 0 };
+/** Stable identity for "nothing is shared with this caller", so a consumer that
+ *  reads `grants` cannot recompute on every render while the feed carries none.
+ *  (`InboxFeed.grants` is optional so pre-grant literals still compile; this is
+ *  what an absent list resolves to.) */
+const NO_GRANTS: InboxGrantItem[] = [];
 /** Stable identity: `useSyncExternalStore` re-renders forever if the server
  *  snapshot is a fresh object on each call. */
 const SERVER_SNAPSHOT: InboxStore = { feed: EMPTY_FEED, isLoading: true };
@@ -140,21 +156,29 @@ function stopPolling(): void {
 /**
  * Persist the watermark: POST in Cloud, localStorage in OSS. Fire-and-forget.
  *
- * `unreadCommentIds` is the explicit un-read instruction. The server merges the
- * watermark by union (so additions are idempotent and a stale client cannot
- * resurrect dismissed items), which means REMOVAL has to travel separately.
- * OSS has no server to tell, so a local write covers both directions.
+ * The two `unread*Ids` lists are the explicit un-read instructions, one per id
+ * namespace (comments and share rows). The server merges the watermark by union
+ * (so additions are idempotent and a stale client cannot resurrect dismissed
+ * items), which means REMOVAL has to travel separately. OSS has no server to
+ * tell, so a local write covers both directions — and it is the same write: the
+ * stored blob is the watermark, `seenGrantIds` included.
+ *
+ * The body is the bare watermark when there is nothing to remove, which keeps
+ * the comment-only path byte-identical to what this hook has always sent.
  */
-function persist(next: InboxWatermark, unreadCommentIds: string[] = []): void {
+function persist(next: InboxWatermark, unreadCommentIds: string[] = [], unreadGrantIds: string[] = []): void {
   watermark = next;
   if (isOSS) {
     writeOssWatermark(next);
     return;
   }
+  const body: Record<string, unknown> = { ...next };
+  if (unreadCommentIds.length > 0) body.unreadCommentIds = unreadCommentIds;
+  if (unreadGrantIds.length > 0) body.unreadGrantIds = unreadGrantIds;
   void fetch('/api/inbox/read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(unreadCommentIds.length > 0 ? { ...next, unreadCommentIds } : next),
+    body: JSON.stringify(body),
   }).catch(() => {
     // Optimistic state stands; the next poll reconciles.
   });
@@ -165,10 +189,11 @@ function persist(next: InboxWatermark, unreadCommentIds: string[] = []): void {
  *
  * Rederiving (rather than adding/removing ids) is what makes "mark unread"
  * possible at all — the unread set is a function of the watermark, not a list
- * that can only shrink.
+ * that can only shrink. It also means a grant un-read is picked up by the same
+ * recompute the comments use (`unreadFromFeed` reads the store's share rows).
  */
-function commit(next: InboxWatermark, unreadCommentIds: string[] = []): void {
-  persist(next, unreadCommentIds);
+function commit(next: InboxWatermark, unreadCommentIds: string[] = [], unreadGrantIds: string[] = []): void {
+  persist(next, unreadCommentIds, unreadGrantIds);
   const unreadIds = unreadFromFeed(store.feed, next);
   emit({ feed: { ...store.feed, unreadIds, unreadCount: unreadIds.length }, isLoading: store.isLoading });
 }
@@ -224,6 +249,18 @@ function markManyUnread(items: InboxCommentItem[]): void {
   commit(applyUnread(watermark, ids), ids);
 }
 
+/** Record ONE share row as read — the same "add by id, never move the boundary"
+ *  move `markItemRead` makes for a comment, in the grant namespace. */
+function markGrantRead(grant: InboxGrantItem): void {
+  commit(markGrantReadPure(watermark, grant));
+}
+
+/** Undo a read on a share row. As with comments, the removal travels in its own
+ *  list because the merge can only add. */
+function markGrantUnread(grant: InboxGrantItem): void {
+  commit(markGrantUnreadPure(watermark, grant), [], [grant.id]);
+}
+
 function refresh(): void {
   void load();
 }
@@ -231,6 +268,13 @@ function refresh(): void {
 export interface UseInboxUnreadResult {
   items: InboxCommentItem[];
   reactions: InboxReactionDelta[];
+  /**
+   * The folios other people shared with this caller, newest first — the
+   * "Shared with you" section. Always an array (empty when nothing is shared),
+   * never undefined: the store owns the list, so a consumer never has to decide
+   * what an absent one means.
+   */
+  grants: InboxGrantItem[];
   unreadIds: string[];
   unreadCount: number;
   /** True only until the first load settles. */
@@ -245,6 +289,10 @@ export interface UseInboxUnreadResult {
   /** Bulk selection actions, used by the Inbox's multi-select bar. */
   markManyRead: (items: InboxCommentItem[]) => void;
   markManyUnread: (items: InboxCommentItem[]) => void;
+  /** Mark one share row read (by id — a share never moves the comment boundary). */
+  markGrantRead: (grant: InboxGrantItem) => void;
+  /** Undo that read. */
+  markGrantUnread: (grant: InboxGrantItem) => void;
 }
 
 export function useInboxUnread(): UseInboxUnreadResult {
@@ -253,6 +301,7 @@ export function useInboxUnread(): UseInboxUnreadResult {
   return {
     items: snapshot.feed.items,
     reactions: snapshot.feed.reactions,
+    grants: snapshot.feed.grants ?? NO_GRANTS,
     unreadIds: snapshot.feed.unreadIds,
     unreadCount: snapshot.feed.unreadCount,
     isLoading: snapshot.isLoading,
@@ -263,5 +312,7 @@ export function useInboxUnread(): UseInboxUnreadResult {
     markAllRead,
     markManyRead,
     markManyUnread,
+    markGrantRead,
+    markGrantUnread,
   };
 }

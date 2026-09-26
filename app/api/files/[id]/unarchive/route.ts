@@ -15,8 +15,10 @@ export const revalidate = 0;
  * The handler itself is shared with the archive route — see
  * lib/api/archive-route.ts for the guard and envelope.
  *
- * OWNER ONLY — the same wrapper, and the same reason, as
- * app/api/files/[id]/archive/route.ts.
+ * OWNER, OR AN EDITOR THE FOLIO WAS SHARED WITH — the same wrapper, and the
+ * same reason, as app/api/files/[id]/archive/route.ts. The gate also passes the
+ * org that owns the folio to the shared handler, so a collaborator outside the
+ * folio's workspace is restored rather than 404'd.
  */
 
 const unarchive = createFolioArchiveRoute('unarchive');
@@ -25,7 +27,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const denial = await gateFolioArchive(context);
-  if (denial) return denial;
-  return unarchive(request, context);
+  const gate = await gateFolioArchive(context);
+  if (!gate.ok) return gate.response;
+  return unarchive(request, context, gate.folioOrgId ? { orgId: gate.folioOrgId } : undefined);
 }
