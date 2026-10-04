@@ -10,8 +10,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import type { HTMLFile } from '@/lib/db';
-import { cn } from '@/lib/utils';
 import { isCloud } from '@/lib/env';
+import { Dropdown } from '@/components/ui/dropdown';
 import { Toggle } from '../settings-popup/toggle';
 import { HeaderMenuSurface } from './header-menu';
 import { CollaboratorSection } from './collaborator-section';
@@ -178,18 +178,18 @@ export function ShareMenu({
     { key: 'presentationModeOnly', label: 'Presentation mode' },
   ];
 
-  // Data editing — a three-way control, not a Toggle: who may change the data
-  // the folio collects (its localStorage map, synced to the owner's account by
-  // the share viewer's state bridge). It is deliberately NOT a visibility
-  // setting — every label below says so, because the neighbours of this control
-  // are all "who can see the folio".
-  const stateWriteOptions: { key: StateWriteMode; label: string; hint: string }[] = [
-    { key: 'off', label: 'Off', hint: 'Nobody can change the data this folio collects.' },
-    { key: 'anonymous', label: 'Anyone with the link', hint: 'Anyone who can open the folio can change its data.' },
-    { key: 'signed_in', label: 'Signed-in', hint: 'Only viewers signed in to LiveFolio can change its data.' },
+  // Data editing — who may change the data the folio collects (its saved
+  // localStorage map, synced to the owner's account by the share viewer's
+  // state bridge). Deliberately NOT a visibility setting: that one distinction
+  // lives in the control's tooltip, because the neighbours of this control are
+  // all "who can see the folio". One compact dropdown row — the menu stays a
+  // menu, not a settings page.
+  const stateWrite: StateWriteMode = folio?.stateWrite ?? 'off';
+  const stateWriteOptions = [
+    { value: 'off', label: 'Off' },
+    { value: 'anonymous', label: 'Anyone with the link' },
+    { value: 'signed_in', label: 'Signed-in viewers' },
   ];
-  const stateWrite = folio?.stateWrite ?? 'off';
-  const activeStateWrite = stateWriteOptions.find((o) => o.key === stateWrite) ?? stateWriteOptions[0];
 
   return (
     <HeaderMenuSurface
@@ -291,52 +291,19 @@ export function ShareMenu({
           </div>
         ))}
 
-        {/* Data editing — who may change the data the folio collects (its saved
-            localStorage, synced to this account by the share viewer). Three
-            modes rather than a toggle, so a segmented control mirrors the
-            price-type control in the Access menu. The copy says out loud what
-            the control does NOT do: the folio's audience is unchanged. */}
+        {/* Data editing — one compact dropdown row (options above). No prose:
+            the tooltip carries the one distinction that matters. */}
         <div className="space-y-1.5">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[13px] font-medium text-ink">Data editing</span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
-              Viewers
-            </span>
-          </div>
-          <p className="text-[11px] leading-snug text-ink/50">
-            Who may change the data this folio collects (a tracker, a list, a form
-            it saves). Saved to your account — it does not change who can see the
-            folio.
-          </p>
-          <div
-            role="radiogroup"
-            aria-label="Who may edit the data this folio collects"
-            className="flex gap-0.5 rounded-lg bg-black/5 p-0.5 dark:bg-white/5"
-          >
-            {stateWriteOptions.map(({ key, label, hint }) => {
-              const selected = stateWrite === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  title={hint}
-                  onClick={() => { if (!selected) void put('stateWrite', key); }}
-                  disabled={saving}
-                  className={cn(
-                    'flex h-7 flex-1 items-center justify-center rounded-md px-1 text-[11px] font-semibold transition-colors cursor-pointer disabled:cursor-default',
-                    selected
-                      ? 'bg-white text-ink shadow-sm dark:bg-[#2A2A26]'
-                      : 'text-ink/50 hover:text-ink'
-                  )}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-[11px] leading-snug text-ink/45">{activeStateWrite.hint}</p>
+          <span className="text-[13px] font-medium text-ink">Data editing</span>
+          <Dropdown
+            value={stateWrite}
+            onChange={(v) => { if (v !== stateWrite) void put('stateWrite', v as StateWriteMode); }}
+            options={stateWriteOptions}
+            ariaLabel="Who may edit the data this folio collects"
+            title="Who may edit the saved data — it does not change who can see the folio."
+            disabled={saving}
+            className="h-8 w-full justify-between rounded-lg bg-black/5 px-3 text-[12px] font-semibold text-ink hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10"
+          />
         </div>
 
         {/* Collaborators — Cloud only. The list, the roles and the refusals all
