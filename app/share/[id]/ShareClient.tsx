@@ -54,6 +54,8 @@ interface InitialShareData {
   title: string;
   description: string;
   isPrivate: boolean;
+  /** Draft gate marker — set by the slug route's gated payload; read defensively below. */
+  draft?: boolean;
   allowComments: boolean;
   presentationModeOnly: boolean;
   hasAccessKey: boolean;
@@ -782,13 +784,13 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
   if (loadError && !project) {
     return (
       <div className="lf-tokens public-light min-h-screen flex items-center justify-center p-6 antialiased bg-[#F4F4F0] text-[#0F0F0D]">
-        <Card className="p-8 w-full max-w-md space-y-5 text-center animate-fade rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
+        <Card className="p-8 w-full max-w-md space-y-5 text-center animate-fade rounded-2xl bg-white dark:bg-white shadow-sm ring-1 ring-black/5">
           <div className="w-12 h-12 flex items-center justify-center mx-auto rounded-xl bg-[var(--lf-accent)]/10 text-[var(--lf-accent)]">
             <AlertCircle size={20} />
           </div>
           <h2 className="text-lg font-bold tracking-tight">Couldn&apos;t load this folio</h2>
           <p className="text-sm leading-relaxed text-[#0F0F0D]/70">{loadError}</p>
-          <Button onClick={() => { setLoadError(null); fetchProject(); }} className="w-full h-11 rounded-xl bg-[var(--lf-accent)] text-white text-sm font-semibold hover:bg-[#0F0F0D]:bg-[#F4F4F0]:text-[#0F0F0D] transition-colors cursor-pointer">
+          <Button onClick={() => { setLoadError(null); fetchProject(); }} className="w-full h-11 rounded-xl bg-[var(--lf-accent)] text-white text-sm font-semibold hover:bg-[#0F0F0D] transition-colors cursor-pointer">
             Retry
           </Button>
         </Card>
@@ -823,7 +825,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
   if (((project as any).draft || (project as any).status === 'draft') && !collaboratorStanding) {
     return (
       <div className="lf-tokens public-light min-h-screen flex items-center justify-center p-6 antialiased bg-[#F4F4F0] text-[#0F0F0D]">
-        <Card className="p-8 w-full max-w-md space-y-6 text-center animate-fade rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
+        <Card className="p-8 w-full max-w-md space-y-6 text-center animate-fade rounded-2xl bg-white dark:bg-white shadow-sm ring-1 ring-black/5">
           <div className="w-12 h-12 flex items-center justify-center mx-auto rounded-xl bg-[var(--lf-accent)]/10 text-[var(--lf-accent)]">
             <PencilRuler size={20} />
           </div>
@@ -842,7 +844,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
   if (project.isPrivate && !accessKey && !collaboratorStanding) {
     return (
       <div className="lf-tokens public-light min-h-screen flex items-center justify-center p-6 antialiased bg-[#F4F4F0] text-[#0F0F0D]">
-        <Card className="p-8 w-full max-w-md space-y-6 text-center animate-fade rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
+        <Card className="p-8 w-full max-w-md space-y-6 text-center animate-fade rounded-2xl bg-white dark:bg-white shadow-sm ring-1 ring-black/5">
           <div className="w-12 h-12 flex items-center justify-center mx-auto rounded-xl bg-[var(--lf-accent)]/10 text-[var(--lf-accent)]">
             <Lock size={20} />
           </div>
@@ -853,7 +855,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
           <form onSubmit={handleUnlockPrivateLink} className="space-y-4">
             <div className="space-y-2 text-left">
               <label className="text-[10px] font-bold uppercase tracking-[0.14em] ml-1 text-[#0F0F0D]/50">Access Key</label>
-              <Input type="password" required placeholder="Enter access key…" value={accessKeyInput} onChange={(e) => setAccessKeyInput(e.target.value)} className="h-12 rounded-xl bg-[#0F0F0D]/5 border-0 px-4 text-sm placeholder:text-[#0F0F0D]/40:text-[#F4F4F0]/40 focus:outline-none focus:ring-2 focus:ring-[var(--lf-accent)]/40" />
+              <Input type="password" required placeholder="Enter access key…" value={accessKeyInput} onChange={(e) => setAccessKeyInput(e.target.value)} className="h-12 rounded-xl bg-[#0F0F0D]/5 dark:bg-[#0F0F0D]/5 border-0 px-4 text-sm text-[#0F0F0D] placeholder:text-[#0F0F0D]/40 focus:outline-none focus:ring-2 focus:ring-[var(--lf-accent)]/40" />
             </div>
             {authError && (
               <div className="text-sm p-3.5 text-left flex items-start gap-2.5 font-medium rounded-xl bg-[var(--lf-accent)]/10 text-[var(--lf-accent)]">
@@ -861,7 +863,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
                 <span>{authError}</span>
               </div>
             )}
-            <Button type="submit" disabled={isUnlocking} className="w-full h-12 rounded-xl bg-[var(--lf-accent)] text-white text-sm font-semibold hover:bg-[#0F0F0D]:bg-[#F4F4F0]:text-[#0F0F0D] transition-colors cursor-pointer">
+            <Button type="submit" disabled={isUnlocking} className="w-full h-12 rounded-xl bg-[var(--lf-accent)] text-white text-sm font-semibold hover:bg-[#0F0F0D] transition-colors cursor-pointer">
               {isUnlocking ? (
                 <><LoadingSpinner size="sm" className="mr-2" /> Verifying…</>
               ) : (
@@ -1147,7 +1149,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
             src={`/api/raw/${project.id}/${activeFilename}?v=${activePreviewVersion}&lf_pins=1${accessKey ? `&access_key=${encodeURIComponent(accessKey)}` : ''}`}
             className="w-full h-full border-none bg-white"
             id="presentation-guest-iframe"
-            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
+            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
             referrerPolicy="no-referrer"
             onLoad={() => setSyncTrigger(prev => prev + 1)}
           />

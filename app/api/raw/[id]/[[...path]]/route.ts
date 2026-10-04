@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { readDB, HTMLFile } from '@/lib/db';
+import { readDB, HTMLFile, HTMLVersion } from '@/lib/db';
 import { isLocalHost } from '@/lib/network';
 import { isOSS, isCloud, FEATURES } from '@/lib/env';
 import { supabaseAdmin, transformFolioRecord } from '@/lib/supabase';
@@ -102,6 +102,134 @@ function injectStateSeed(html: string, seedJson: string): string {
     return html.slice(0, doctype.index) + tags + html.slice(doctype.index);
   }
   return tags + html;
+}
+
+// ── Private multi-file folios: inline same-version subresources ──────
+// A private folio that reaches a share viewer is displayed inside the
+// viewer's sandboxed iframe, whose opaque origin makes its subresource
+// requests CROSS-SITE. The access key is query-only (so it is absent from
+// them by construction), and the browser drops even a Path-scoped
+// SameSite=Lax cookie on them — measured in a real Chromium against the
+// share viewer: the server sees an empty `cookie` header and
+// `sec-fetch-site: cross-site` on both `app.js` and `style.css`, they 401,
+// and the folio's own code never runs.
+//
+// The route already holds every file of the served version, so for the
+// keyed viewer the two reference kinds that would 401 are substituted with
+// their same-version contents:
+//   <link rel="stylesheet" href="style.css">  →  <style>…</style>
+//   <script src="app.js"></script>            →  inline <script>
+// Anything that is not a plain relative reference resolved in THIS version
+// (absolute/scheme URLs, paths this version does not hold — including every
+// other asset kind, which keeps its original tag and its original failure
+// mode) is left untouched. Public folios never reach this code (the flag
+// stays false → byte-identical output), and private responses already force
+// `no-store`, so key-bearing HTML is never cached.
+
+/** Extract an unquoted attribute value from a tag's source text. */
+function readTagAttr(tag: string, name: string): string | null {
+  const re = new RegExp('\\b' + name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s"\'=<>`]+))', 'i');
+  const m = re.exec(tag);
+  if (!m) return null;
+  return m[1] ?? m[2] ?? m[3] ?? null;
+}
+
+/**
+ * The version file a relative reference points at, or null when the
+ * reference is not a plain relative path (absolute, protocol-relative or
+ * scheme-qualified) or this version holds no such file. Query/hash are
+ * stripped and the path is resolved against the SERVED document's
+ * directory, so `./app.js` and `sub/../app.js` both land on the same file
+ * the browser would have requested.
+ */
+function resolveVersionFile(
+  files: { [filename: string]: string },
+  servedFilename: string,
+  ref: string
+): { key: string; code: string } | null {
+  const raw = ref.trim();
+  if (!raw || raw.startsWith('/') || raw.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
+  const pathOnly = raw.split('#')[0].split('?')[0];
+  if (!pathOnly) return null;
+  let decoded = pathOnly;
+  try { decoded = decodeURIComponent(pathOnly); } catch { /* keep raw on malformed escapes */ }
+  const base = servedFilename.split('/');
+  base.pop();
+  const out = base.slice();
+  for (const seg of decoded.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  const key = out.join('/');
+  if (files[key] !== undefined) return { key, code: files[key] };
+  const lower = key.toLowerCase();
+  const ci = Object.keys(files).find((k) => k.toLowerCase() === lower);
+  return ci === undefined ? null : { key: ci, code: files[ci] };
+}
+
+/** Neutralize a literal `</script`/`</style` so an inlined body cannot
+ *  terminate its own element early. `<\/` is a valid escape sequence in
+ *  both JS and CSS strings, so the parsed value is unchanged. */
+function escapeInlineEnd(tag: 'script' | 'style', body: string): string {
+  return body.replace(new RegExp('</(' + tag + ')', 'gi'), '<\\/$1');
+}
+
+/** Substitute same-version <script src>/<link rel=stylesheet> references
+ *  with their contents. See the block comment above for the why. */
+function inlinePrivateSubresources(html: string, version: HTMLVersion, servedFilename: string): string {
+  const files = version.files;
+  const docDir = servedFilename.includes('/')
+    ? servedFilename.slice(0, servedFilename.lastIndexOf('/'))
+    : '';
+  // Classic defer/async scripts must not run before the document parses —
+  // that is what the attribute buys — and an inline script in their place
+  // would run immediately. They are collected and emitted together just
+  // before </body>, in document order, which preserves both the globals a
+  // script defines (a wrapping function would not) and their ordering.
+  const deferred: string[] = [];
+
+  let out = html.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, (whole) => {
+    const openTag = /^<script\b[^>]*>/i.exec(whole)?.[0] ?? '';
+    const src = readTagAttr(openTag, 'src');
+    if (!src) return whole;
+    const hit = resolveVersionFile(files, servedFilename, src);
+    if (!hit) return whole;
+    const type = (readTagAttr(openTag, 'type') || '').toLowerCase();
+    const isModule = type === 'module';
+    // A module's relative imports resolve against the module's own URL
+    // externally, but against the DOCUMENT url once inlined — substitute
+    // only when the module sits in the document's own directory, where the
+    // two coincide.
+    if (isModule && hit.key.slice(0, Math.max(0, hit.key.lastIndexOf('/'))) !== docDir) return whole;
+    const body = escapeInlineEnd('script', hit.code);
+    const typeAttr = type ? ` type="${type}"` : '';
+    if (!isModule && /\b(defer|async)\b/i.test(openTag)) {
+      deferred.push(`<script${typeAttr}>${body}</script>`);
+      return '';
+    }
+    return `<script${typeAttr}>${body}</script>`;
+  });
+
+  out = out.replace(/<link\b[^>]*>/gi, (tag) => {
+    const rel = (readTagAttr(tag, 'rel') || '').toLowerCase();
+    if (!rel.split(/\s+/).includes('stylesheet')) return tag;
+    const href = readTagAttr(tag, 'href');
+    if (!href) return tag;
+    const hit = resolveVersionFile(files, servedFilename, href);
+    if (!hit) return tag;
+    const media = readTagAttr(tag, 'media');
+    const mediaAttr = media ? ` media="${media.replace(/"/g, '&quot;')}"` : '';
+    return `<style${mediaAttr}>${escapeInlineEnd('style', hit.code)}</style>`;
+  });
+
+  if (deferred.length > 0) {
+    const block = deferred.join('\n');
+    out = /<\/body\s*>/i.test(out)
+      ? out.replace(/<\/body\s*>/i, `${block}\n</body>`)
+      : out + block;
+  }
+  return out;
 }
 
 /**
@@ -573,6 +701,16 @@ export async function GET(
 
     let project: HTMLFile | null = null;
 
+    // Set only when a private folio was opened with its valid access key:
+    // the key is the one credential that cannot reach subresource requests
+    // from the share viewer's sandboxed iframe, so this flag decides which
+    // HTML responses get same-version inlining (see
+    // inlinePrivateSubresources). Members and collaborators keep the
+    // previous behaviour — their standing is a cookie, which the same
+    // opaque-origin rule also drops, but widening the treatment to them is
+    // a deliberate decision this route does not take on its own.
+    let privateKeyViewer = false;
+
     // ── One viewer resolution per request ─────────────────────────────
     // Five checks below ask who is calling: the private-key gate, the
     // draft/takedown gate, the historical-version pin, the paid gate — and the
@@ -610,6 +748,7 @@ export async function GET(
         if (!serverKey || !accessKeyParam || !safeEqual(accessKeyParam, serverKey)) {
           return new Response('Access Denied: Invalid access key.', { status: 403 });
         }
+        privateKeyViewer = true;
       }
     } else {
       // Cloud Mode - High-Fidelity direct UUID lookups (with long-duration in-memory caching)
@@ -646,6 +785,7 @@ export async function GET(
             return new Response('Access Denied: Invalid access key.', { status: 403 });
           }
           // Valid access key — skip Supabase auth check, allow through
+          privateKeyViewer = true;
         } else {
           // A collaborator (role ≥ viewer) bypasses the key: the grant
           // IS the owner handing over the key, and asking them for a secret the
@@ -1038,6 +1178,12 @@ export async function GET(
           return new Response('Access denied', { status: 403, headers: applyGateHeaders() });
         }
         let html = version.files['index.html'];
+        // Keyed private viewer: inline same-version subresources so the
+        // folio's own scripts/styles do not 401 inside the sandboxed share
+        // iframe (see inlinePrivateSubresources).
+        if (privateKeyViewer) {
+          html = inlinePrivateSubresources(html, version, 'index.html');
+        }
         if ((await isFreePlan(project)) && (await isGuestShare(request, project, readSession))) {
           html = injectWatermark(html);
         }
@@ -1263,6 +1409,17 @@ export async function GET(
     if (isHtml && stateWriteMode) {
       code = injectStateSeed(code, await buildStateSeedJson(project, stateWriteMode, readSession));
       forceNoStore = true;
+    }
+
+    // Keyed private viewer: inline same-version subresources so the folio's
+    // own scripts/styles do not 401 inside the sandboxed share iframe (see
+    // inlinePrivateSubresources). Runs after every injection so the bridge
+    // tags (absolute, public static files) are already placed and untouched;
+    // only the folio's own relative references are rewritten. Non-HTML files
+    // (`isHtml` false) are never rewritten — an asset served to a keyed
+    // viewer keeps its bytes and its cache policy.
+    if (isHtml && privateKeyViewer) {
+      code = inlinePrivateSubresources(code, version, filename);
     }
 
     // Serve file with correct content-type — cache policy in cacheControl()
