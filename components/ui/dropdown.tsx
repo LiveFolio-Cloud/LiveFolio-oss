@@ -10,7 +10,7 @@
  * measured from the trigger (immune to overflow/transform clipping), click
  * away + Escape to close.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -50,6 +50,7 @@ export function Dropdown({
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, right: 0, width: 0 });
   const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const normalized: DropdownOption[] = options.map((o) =>
     typeof o === 'string' ? { value: o, label: o } : o
@@ -71,6 +72,29 @@ export function Dropdown({
     }
     setOpen((v) => !v);
   };
+
+  // Flip above the trigger when the menu would run past the viewport's bottom
+  // edge. The Studio's chat-composer selectors sit at the BOTTOM of the
+  // screen, so a downward-only menu is exactly what gets clipped there.
+  // Measured after mount — useLayoutEffect runs before paint, so the menu is
+  // never visibly displaced — with a final clamp for viewports too short for
+  // either side (the max-height + overflow on the panel make that scrollable).
+  useLayoutEffect(() => {
+    if (!open) return;
+    const btn = btnRef.current;
+    const menu = menuRef.current;
+    if (!btn || !menu) return;
+    const r = btn.getBoundingClientRect();
+    const h = menu.offsetHeight;
+    const margin = 8;
+    const gap = 6;
+    let top = r.bottom + gap;
+    if (top + h > window.innerHeight - margin) {
+      const above = r.top - gap - h;
+      top = above >= margin ? above : Math.max(margin, window.innerHeight - margin - h);
+    }
+    setPos((p) => (p.top === top ? p : { ...p, top }));
+  }, [open]);
 
   // Escape closes while open.
   useEffect(() => {
@@ -112,14 +136,17 @@ export function Dropdown({
           {/* Menu — canonical popover surface */}
           <div
             role="listbox"
+            ref={menuRef}
             className={cn(
-              'fixed z-[260] min-w-[10rem] p-1 rounded-xl bg-white dark:bg-[#171714] shadow-xl ring-1 ring-black/5 dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100',
+              'fixed z-[260] min-w-[10rem] p-1 rounded-xl bg-white dark:bg-[#171714] shadow-xl ring-1 ring-black/5 dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100 overflow-y-auto',
               menuClassName
             )}
             style={{
               top: pos.top,
               ...(align === 'left' ? { left: pos.left } : { right: pos.right }),
               minWidth: Math.max(160, pos.width),
+              // Tall menus scroll instead of running off the viewport.
+              maxHeight: 'min(20rem, calc(100vh - 16px))',
             }}
           >
             {normalized.map((o, i) => {
