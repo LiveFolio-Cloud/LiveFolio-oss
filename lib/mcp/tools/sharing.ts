@@ -1,11 +1,13 @@
 /**
  * MCP tool handlers — sharing and visibility: status, dev tunnel,
- * public-access flag, and manage_sharing (publish/privacy/access key).
+ * public-access flag, and manage_sharing (publish/privacy/access key +
+ * `state_write`, who may edit the data a folio collects).
  */
 import { readDB, runTransaction } from '@/lib/db';
 import fs from 'fs';
 import { startTunnel } from 'untun';
 import { isOSS } from '@/lib/env';
+import { isStateWriteMode } from '@/lib/folio-state';
 import { supabaseAdmin } from '@/lib/supabase';
 import { projectMemoryCache } from '@/lib/project-cache';
 import { SETTINGS_FILE, globalWithTunnel, requireSupabaseAdmin, resolveOrgIdFromHeaders, getRequestOrigin } from '@/lib/mcp/shared';
@@ -140,15 +142,34 @@ export async function handleSetFolioPublicAccess(args: any, request?: Request) {
 
 // ── Phase 2: sharing / paid access / listing / marketplace ─────────────
 
+/**
+ * `state_write` is the one field here that is not about who can SEE the folio:
+ * it is who may edit the DATA the folio collects (its `HTMLFile.stateWrite` /
+ * `folios.state_write` mirror, `undefined` = the column's `'off'` default).
+ * Both axes ride the same row update; neither is ever derived from the other.
+ */
+
 /** Read or change sharing/visibility settings (dual-mode, no version bump). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool arguments are unvalidated JSON-RPC params whose shape is dynamic by design
 export async function handleManageSharing(args: any) {
-  const { project_id, status, isPrivate, accessKey, allowComments, presentationModeOnly } = args || {};
+  const { project_id, status, isPrivate, accessKey, allowComments, presentationModeOnly, stateWrite } = args || {};
   if (!project_id) throw new Error("Argument 'project_id' is required.");
+
+  // Validate the enum before either store is touched: one error, identical in
+  // both modes, and the column's CHECK constraint can never be the thing that
+  // reports a bad mode. Only `undefined` means "leave it alone" — a `null` (or
+  // any other value) is refused rather than silently ignored, so an agent that
+  // sends the wrong thing hears about it.
+  if (stateWrite !== undefined && !isStateWriteMode(stateWrite)) {
+    throw new Error(
+      "Argument 'stateWrite' must be 'off', 'anonymous' or 'signed_in' — it controls who may edit the data this folio collects."
+    );
+  }
 
   const hasChanges =
     status !== undefined || isPrivate !== undefined || accessKey !== undefined ||
-    allowComments !== undefined || presentationModeOnly !== undefined;
+    allowComments !== undefined || presentationModeOnly !== undefined ||
+    stateWrite !== undefined;
 
   if (!isOSS) {
     const orgId = await resolveOrgIdFromHeaders();
@@ -156,7 +177,7 @@ export async function handleManageSharing(args: any) {
 
     const { data: current, error: fetchError } = await supabaseAdmin
       .from('folios')
-      .select('id, is_private, access_key, allow_comments, presentation_mode_only, status, archived_at')
+      .select('id, is_private, access_key, allow_comments, presentation_mode_only, status, archived_at, state_write')
       .eq('id', project_id)
       .eq('organization_id', orgId)
       .maybeSingle();
@@ -179,6 +200,10 @@ export async function handleManageSharing(args: any) {
         hasAccessKey: !!current.access_key,
         allowComments: current.allow_comments ?? true,
         presentationModeOnly: current.presentation_mode_only ?? false,
+        // Who may edit the data the folio collects — absent on rows created
+        // before the column existed, and on any deployment where the read
+        // predates it; both mean 'off'.
+        stateWrite: isStateWriteMode(current.state_write) ? current.state_write : 'off',
         archived: !!current.archived_at,
       };
     }
@@ -193,6 +218,10 @@ export async function handleManageSharing(args: any) {
     if (accessKey !== undefined) patch.access_key = accessKey || null;
     if (allowComments !== undefined) patch.allow_comments = !!allowComments;
     if (presentationModeOnly !== undefined) patch.presentation_mode_only = !!presentationModeOnly;
+    // Deliberately the only place the data-editing mode is written, and it
+    // rides the same row update as the visibility fields without ever being
+    // derived from them.
+    if (stateWrite !== undefined) patch.state_write = stateWrite;
 
     const { error: updateError } = await supabaseAdmin
       .from('folios')
@@ -209,6 +238,7 @@ export async function handleManageSharing(args: any) {
       hasAccessKey: !!(patch.access_key ?? current.access_key),
       allowComments: patch.allow_comments ?? current.allow_comments ?? true,
       presentationModeOnly: patch.presentation_mode_only ?? current.presentation_mode_only ?? false,
+      stateWrite: patch.state_write ?? (isStateWriteMode(current.state_write) ? current.state_write : 'off'),
     };
   }
 
@@ -223,6 +253,7 @@ export async function handleManageSharing(args: any) {
       hasAccessKey: !!project.accessKey,
       allowComments: project.allowComments ?? true,
       presentationModeOnly: project.presentationModeOnly ?? false,
+      stateWrite: project.stateWrite ?? 'off',
       archived: !!project.archivedAt,
     };
   }
@@ -242,6 +273,9 @@ export async function handleManageSharing(args: any) {
     if (accessKey !== undefined) project.accessKey = accessKey || undefined;
     if (allowComments !== undefined) project.allowComments = !!allowComments;
     if (presentationModeOnly !== undefined) project.presentationModeOnly = !!presentationModeOnly;
+    // The flat-file mirror of the cloud `state_write` column (the same
+    // contract the state API's OSS arm reads: absent means 'off').
+    if (stateWrite !== undefined) project.stateWrite = stateWrite;
     project.updatedAt = new Date().toISOString();
     db[idx] = project;
     return {
@@ -250,6 +284,7 @@ export async function handleManageSharing(args: any) {
       hasAccessKey: !!project.accessKey,
       allowComments: project.allowComments,
       presentationModeOnly: project.presentationModeOnly,
+      stateWrite: project.stateWrite ?? 'off',
     };
   });
   return { success: true, ...result };

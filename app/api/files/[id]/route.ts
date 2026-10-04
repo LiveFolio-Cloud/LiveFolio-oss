@@ -10,6 +10,7 @@ import { deleteFolioAssets } from '@/lib/asset-store';
 import { assertStorageQuota } from '@/ee/middleware/usageCapping';
 import { sanitizePaidAccess } from '@/lib/gating/config';
 import type { PaidAccessConfig } from '@/lib/gating/types';
+import { isStateWriteMode } from '@/lib/folio-state';
 import { sanitizeListing, listingWriteGuard, preserveAttestation, defaultListing } from '@/lib/listing/config';
 import type { ListingMetadata } from '@/lib/listing/types';
 import { nextVersionId, applyVersionRetention } from '@/lib/version-retention';
@@ -184,6 +185,7 @@ export async function PUT(
       accessKey,
       allowComments,
       presentationModeOnly,
+      stateWrite,
       aiPersona,
       projectMode,
       designPreferences,
@@ -231,7 +233,28 @@ export async function PUT(
       ? partitionWritableFields(callerRole, body)
       : { blocked: new Set<string>(), stripped: [] as string[] };
     const mayWrite = (bodyKey: string) => !blocked.has(bodyKey);
-    const strippedReport = stripped.length > 0 ? { strippedFields: stripped } : {};
+
+    // `stateWrite` — who may edit the DATA this folio collects (`off` /
+    // `anonymous` / `signed_in`), never who may see it. A sharing control with
+    // the same standing as `isPrivate` and `allowComments` (both owner-only).
+    // The role vocabulary's field maps (`FIELD_BY_BODY_KEY` in
+    // `_lib/role-gate.ts`, `FIELD_CAPABILITY` in `lib/collaborators/roles.ts`)
+    // do not carry it yet, so it is ranked HERE against the standing this route
+    // has already resolved: OSS has no roles (the caller owns its one
+    // workspace), and on Cloud only the owner may change it. A refusal is NAMED
+    // in `strippedFields` — the map would have done that for a field it knows,
+    // and a 200 that quietly dropped a payload key is exactly the kind of lie
+    // an optimistic client cannot recover from. An unrecognised VALUE is
+    // refused loudly: the column's CHECK constraint must never surface as a 500.
+    const mayWriteStateWrite = () => mayWrite('stateWrite') && (isOSS || callerRole === 'owner');
+    const stateWriteStripped = stateWrite !== undefined && !mayWriteStateWrite() && !blocked.has('stateWrite');
+    const strippedReport =
+      stripped.length > 0 || stateWriteStripped
+        ? { strippedFields: stateWriteStripped ? [...stripped, 'stateWrite'] : stripped }
+        : {};
+    if (stateWrite !== undefined && mayWriteStateWrite() && !isStateWriteMode(stateWrite)) {
+      return err('Invalid data editing mode.', { status: 400 });
+    }
 
     // An archived folio cannot be republished in place — it has to come back
     // out of the archive first, landing as a draft the owner publishes
@@ -359,6 +382,7 @@ export async function PUT(
         if (accessKey !== undefined) project.accessKey = accessKey;
         if (allowComments !== undefined) project.allowComments = allowComments;
         if (presentationModeOnly !== undefined) project.presentationModeOnly = presentationModeOnly;
+        if (stateWrite !== undefined) project.stateWrite = stateWrite;
         // The retired collaborator write + share-notification path used to sit
         // here. Self-hosted installs have no accounts to grant to, and the
         // notification email pointed at a link that granted nothing: the invite
@@ -423,6 +447,10 @@ export async function PUT(
       if (accessKey !== undefined && mayWrite('accessKey')) patch.access_key = accessKey;
       if (allowComments !== undefined && mayWrite('allowComments')) patch.allow_comments = allowComments;
       if (presentationModeOnly !== undefined && mayWrite('presentationModeOnly')) patch.presentation_mode_only = presentationModeOnly;
+      // Data editing is a plain folios column (the state itself lives in
+      // `folio_state`): the lightweight patch is the only writer, so a version
+      // push can never flip it as a side effect.
+      if (stateWrite !== undefined && mayWriteStateWrite()) patch.state_write = stateWrite;
       if (aiPersona !== undefined && mayWrite('aiPersona')) patch.ai_persona = aiPersona;
       if (projectMode !== undefined && mayWrite('projectMode')) patch.project_mode = projectMode;
       if (designPreferences !== undefined && mayWrite('designPreferences')) patch.design_preferences = designPreferences;
@@ -476,6 +504,7 @@ export async function PUT(
       if (accessKey !== undefined && mayWrite('accessKey')) responseProject.accessKey = accessKey;
       if (allowComments !== undefined && mayWrite('allowComments')) responseProject.allowComments = allowComments;
       if (presentationModeOnly !== undefined && mayWrite('presentationModeOnly')) responseProject.presentationModeOnly = presentationModeOnly;
+      if (stateWrite !== undefined && mayWriteStateWrite()) responseProject.stateWrite = stateWrite;
       if (aiPersona !== undefined && mayWrite('aiPersona')) responseProject.aiPersona = aiPersona;
       if (projectMode !== undefined && mayWrite('projectMode')) responseProject.projectMode = projectMode;
       if (designPreferences !== undefined && mayWrite('designPreferences')) responseProject.designPreferences = designPreferences;

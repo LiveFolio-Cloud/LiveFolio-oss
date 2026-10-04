@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import type { HTMLFile } from '@/lib/db';
+import { cn } from '@/lib/utils';
 import { isCloud } from '@/lib/env';
 import { Toggle } from '../settings-popup/toggle';
 import { HeaderMenuSurface } from './header-menu';
@@ -19,6 +20,10 @@ import { CollaboratorSection } from './collaborator-section';
  *  the menu toggles; `ownerUsername` is an extra echoed by the GET /api/files
  *  responses (the canonical @username/slug link needs it). */
 type ShareFolio = HTMLFile & { ownerUsername?: string };
+
+/** `state_write`'s three modes, read off the folio type the menu already holds
+ *  (the column's own vocabulary — no import from the server-only state module). */
+type StateWriteMode = NonNullable<HTMLFile['stateWrite']>;
 
 /** 8-char access key — same generator shape as the v1 header. */
 /** One link row: label + copy/open actions. */
@@ -173,6 +178,19 @@ export function ShareMenu({
     { key: 'presentationModeOnly', label: 'Presentation mode' },
   ];
 
+  // Data editing — a three-way control, not a Toggle: who may change the data
+  // the folio collects (its localStorage map, synced to the owner's account by
+  // the share viewer's state bridge). It is deliberately NOT a visibility
+  // setting — every label below says so, because the neighbours of this control
+  // are all "who can see the folio".
+  const stateWriteOptions: { key: StateWriteMode; label: string; hint: string }[] = [
+    { key: 'off', label: 'Off', hint: 'Nobody can change the data this folio collects.' },
+    { key: 'anonymous', label: 'Anyone with the link', hint: 'Anyone who can open the folio can change its data.' },
+    { key: 'signed_in', label: 'Signed-in', hint: 'Only viewers signed in to LiveFolio can change its data.' },
+  ];
+  const stateWrite = folio?.stateWrite ?? 'off';
+  const activeStateWrite = stateWriteOptions.find((o) => o.key === stateWrite) ?? stateWriteOptions[0];
+
   return (
     <HeaderMenuSurface
       open={open}
@@ -272,6 +290,54 @@ export function ShareMenu({
             <Toggle checked={Boolean(folio?.[key])} onChange={() => put(key, !folio?.[key])} disabled={saving} />
           </div>
         ))}
+
+        {/* Data editing — who may change the data the folio collects (its saved
+            localStorage, synced to this account by the share viewer). Three
+            modes rather than a toggle, so a segmented control mirrors the
+            price-type control in the Access menu. The copy says out loud what
+            the control does NOT do: the folio's audience is unchanged. */}
+        <div className="space-y-1.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[13px] font-medium text-ink">Data editing</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
+              Viewers
+            </span>
+          </div>
+          <p className="text-[11px] leading-snug text-ink/50">
+            Who may change the data this folio collects (a tracker, a list, a form
+            it saves). Saved to your account — it does not change who can see the
+            folio.
+          </p>
+          <div
+            role="radiogroup"
+            aria-label="Who may edit the data this folio collects"
+            className="flex gap-0.5 rounded-lg bg-black/5 p-0.5 dark:bg-white/5"
+          >
+            {stateWriteOptions.map(({ key, label, hint }) => {
+              const selected = stateWrite === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  title={hint}
+                  onClick={() => { if (!selected) void put('stateWrite', key); }}
+                  disabled={saving}
+                  className={cn(
+                    'flex h-7 flex-1 items-center justify-center rounded-md px-1 text-[11px] font-semibold transition-colors cursor-pointer disabled:cursor-default',
+                    selected
+                      ? 'bg-white text-ink shadow-sm dark:bg-[#2A2A26]'
+                      : 'text-ink/50 hover:text-ink'
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] leading-snug text-ink/45">{activeStateWrite.hint}</p>
+        </div>
 
         {/* Collaborators — Cloud only. The list, the roles and the refusals all
             come from /api/collaborators: the legacy email array on the folio is

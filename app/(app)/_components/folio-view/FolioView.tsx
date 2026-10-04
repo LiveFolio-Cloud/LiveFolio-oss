@@ -82,6 +82,7 @@ import { isCloud } from '@/lib/env';
 import { cn } from '@/lib/utils';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { extractBase64Images } from '@/lib/extract-base64-images';
+import { DATA_URL_ANCHORED_STRICT_RE, decodeBase64DataUrl } from '@/lib/mime';
 import { readTextFile, readImageAsDataURL } from '@/lib/unpack-files';
 import { useAttachmentIntake } from '@/lib/attachments/use-attachment-intake';
 import { EDITOR_DESIGN_DEFAULTS } from '@/lib/design-options';
@@ -1374,24 +1375,46 @@ export function FolioView() {
       // (uploaded as binary to bypass Next.js's 10 MB body buffer limit).
       const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp']);
       const isImage = (path: string) => imageExts.has(path.split('.').pop()?.toLowerCase() || '');
+
+      // An image extension says what the file IS, not what its value holds.
+      // A folio's `assets/*` entries hold `asset://` POINTERS — references to
+      // bytes already in the asset store, the form the server passes through
+      // untouched — and a pointer has nothing to upload. Routing one into the
+      // binary step fed it to atob(), which threw, and threw AFTER the PUT
+      // below had already written the version: the edit landed while the user
+      // was shown a failure. So the test is the value, not the name.
+      //
+      // STRICT, not the loose pattern the server accepts. Strict is the
+      // narrowest dialect, and narrow is the safe direction to be wrong in: a
+      // value it rejects is not lost — it rides in the PUT as text, where the
+      // server's own looser pass offloads it exactly as it would have here.
+      const isUploadableImage = (path: string, content: string) =>
+        isImage(path) && DATA_URL_ANCHORED_STRICT_RE.test(content);
+
       const textFiles: Record<string, string> = {};
-      const imageFiles: Record<string, string> = {};
+      // Decoded HERE, before the PUT, so nothing downstream can throw on a save
+      // that has already been persisted.
+      const imageFiles: Record<string, Uint8Array<ArrayBuffer>> = {};
       // After extractBase64Images, every extracted image has TWO entries:
       // the original path AND the asset copy (assets/img-{hash}.ext).
       // HTML files reference the ORIGINAL paths (screenshots/hero.png), not
       // the asset copies. Keep originals, skip asset copies when content matches.
       const originalContents = new Set<string>();
       for (const [path, content] of Object.entries(leanFiles)) {
-        if (isImage(path) && !path.startsWith('assets/')) {
+        if (isUploadableImage(path, content) && !path.startsWith('assets/')) {
           originalContents.add(content);
         }
       }
       for (const [path, content] of Object.entries(leanFiles)) {
-        if (isImage(path)) {
-          // Skip asset copy when the original file already provides this content
-          if (path.startsWith('assets/') && originalContents.has(content)) continue;
-          imageFiles[path] = content;
+        const decoded = isUploadableImage(path, content) ? decodeBase64DataUrl(content) : null;
+        // Skip asset copy when the original file already provides this content
+        if (decoded && path.startsWith('assets/') && originalContents.has(content)) continue;
+        if (decoded) {
+          imageFiles[path] = decoded;
         } else {
+          // Everything else — text files, `asset://` pointers, and the odd
+          // value that matches the shape but will not decode — rides in the
+          // PUT intact.
           textFiles[path] = content;
         }
       }
@@ -1413,12 +1436,7 @@ export function FolioView() {
       if (Object.keys(imageFiles).length > 0) {
         setImportPhase('transforming');
         const form = new FormData();
-        for (const [path, dataUrl] of Object.entries(imageFiles)) {
-          const b64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
-          // atob() decodes base64 → latin1 binary string → Uint8Array
-          const binary = atob(b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        for (const [path, bytes] of Object.entries(imageFiles)) {
           const ext = path.split('.').pop()?.toLowerCase() || 'bin';
           const mime = {png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',ico:'image/x-icon',svg:'image/svg+xml'}[ext] || 'application/octet-stream';
           form.append('files', new Blob([bytes], { type: mime }), path);

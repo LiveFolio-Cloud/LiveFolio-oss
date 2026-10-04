@@ -99,6 +99,19 @@ export async function listGrantedFolios(
   return [];
 }
 
+/**
+ * Nothing is shared with anyone here, so no row carries a count.
+ *
+ * The signature is the Cloud one — a MAP of counts, not a plain number — so
+ * the shipped sidebar can render the badge on both trees without branching on
+ * which build it is in. It is simply always empty.
+ */
+export async function countCollaboratorsByFolio(
+  _folioIds: string[]
+): Promise<Map<string, number>> {
+  return new Map();
+}
+
 // ─── The gate contract ───────────────────────────────────────────────────────
 
 /** The `[id]` routes' 404 body — unchanged copy. */

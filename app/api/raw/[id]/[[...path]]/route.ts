@@ -16,6 +16,14 @@ import { embedTraceMarker } from '@/lib/folio-keys';
 import { safeEqual } from '@/lib/crypto';
 import { sessionSupabaseClient } from '@/lib/api/session';
 import { isOrgMember } from '@/lib/api/membership';
+import {
+  getFolioState,
+  buildStateSeed,
+  serializeStateSeed,
+  validateStateMap,
+  isStateWriteMode,
+} from '@/lib/folio-state';
+import type { FolioStateRecord, StateWriteMode } from '@/lib/folio-state';
 import { can, resolveFolioRole } from '@/app/api/files/_lib/role-gate';
 import type { FolioCapability, FolioRole } from '@/app/api/files/_lib/role-gate';
 import type { PaidAccessConfig } from '@/lib/gating/types';
@@ -50,6 +58,91 @@ function injectPinBridge(html: string): string {
     return html.replace('</body>', `${PIN_BRIDGE_TAG}\n</body>`);
   }
   return html + PIN_BRIDGE_TAG;
+}
+
+// ── Folio state seed + bridge (opt-in via ?lf_pins=1 and the folio's
+//    state_write mode) ────────────────────────────────────────────────
+// A folio in the share iframe runs in an opaque origin where native
+// localStorage throws, so its own edits are swallowed by its try/catch. The
+// bridge (public/livefolio-state-bridge.js) shadows localStorage with an
+// in-memory map and relays writes to the parent page. For that to work on the
+// folio's OWN parse-time read the map must be seeded SYNCHRONOUSLY — the only
+// way is to inline the seed and a parser-blocking script as the FIRST children
+// of <head>, before any folio script parses. Same static-file rationale as the
+// pin bridge (bridge fixes ship without a folio version bump).
+//
+// Anchor algorithm (spike §C2, browser-proven, never the literal
+// replace('<head>')): HTML comments are blanked with equal-length spaces so the
+// search can never land inside a comment while byte offsets stay valid for the
+// original string; /<head[^>]*>/i is then matched on the blanked copy and the
+// injection happens at that offset in the original (tolerates <HEAD> and
+// attributes). No <head> at all → the tags go before <!doctype> (proven to
+// execute in order in Chromium and WebKit), else at position 0.
+const STATE_BRIDGE_TAG = '<script src="/livefolio-state-bridge.js"></script>';
+
+/** Blank HTML comments with equal-length spaces (offsets preserved). */
+function blankHtmlComments(html: string): string {
+  return html.replace(/<!--[\s\S]*?-->/g, (m) => ' '.repeat(m.length));
+}
+
+function injectStateSeed(html: string, seedJson: string): string {
+  const tags = `<script>window.__LF_STATE__=${seedJson}</script>${STATE_BRIDGE_TAG}`;
+  const blanked = blankHtmlComments(html);
+  const head = /<head[^>]*>/i.exec(blanked);
+  if (head) {
+    const at = head.index + head[0].length;
+    return html.slice(0, at) + tags + html.slice(at);
+  }
+  const doctype = /<!doctype[^>]*>/i.exec(blanked);
+  // Only anchor before the doctype when nothing but whitespace precedes it — a
+  // doctype further down a malformed document is not a safe anchor (the tags
+  // would land mid-document), and prepending at position 0 still executes
+  // before every folio script.
+  if (doctype && blanked.slice(0, doctype.index).trim() === '') {
+    return html.slice(0, doctype.index) + tags + html.slice(doctype.index);
+  }
+  return tags + html;
+}
+
+/**
+ * The serialized seed for one folio, ready to inline.
+ *
+ * `readOnly` means "this viewer's writes will be refused" — true only for a
+ * signed-in-only folio viewed without a session. The session read is the
+ * request's own memoized resolver (the same one every gate uses), so this costs
+ * at most one cookie probe; the PUT gate remains the AUTHORITATIVE check and
+ * `ro` is informational (the shim relays the rejection's reason to the console
+ * and otherwise keeps serving its map; it never becomes the gatekeeper).
+ *
+ * Cloud reads through `lib/folio-state.ts` (cached). OSS has no `folio_state`
+ * table: HTMLFile.state/stateRev are the flat-file mirror the state API's OSS
+ * arm reads and writes, so the record itself is the store.
+ */
+async function buildStateSeedJson(
+  project: HTMLFile,
+  stateWrite: 'anonymous' | 'signed_in',
+  readSession: () => Promise<{ id: string } | null>
+): Promise<string> {
+  const readOnly = stateWrite === 'signed_in' && !(await readSession());
+  let record: FolioStateRecord | null = null;
+  if (isOSS) {
+    const state = validateStateMap(project.state);
+    record = state
+      ? {
+          folioId: project.id,
+          state,
+          rev: Number.isFinite(project.stateRev)
+            ? Math.max(0, Math.trunc(project.stateRev as number))
+            : 0,
+          updatedBy: null,
+          updatedLabel: null,
+          updatedAt: '',
+        }
+      : null;
+  } else {
+    record = await getFolioState(project.id);
+  }
+  return serializeStateSeed(buildStateSeed(record, readOnly));
 }
 
 // ── Source-lock delivery (P2) ────────────────────────────────────────
@@ -576,6 +669,17 @@ export async function GET(
       return new Response('Project Not Found', { status: 404 });
     }
 
+    // Who may edit the data this folio collects. Absent (every folio today, and
+    // the whole OSS record shape before the field existed) means 'off' — with
+    // 'off' the response is byte-identical to what this route served before the
+    // feature (invariant #2).
+    const stateWrite: StateWriteMode = isStateWriteMode(project.stateWrite) ? project.stateWrite : 'off';
+    // Non-null only when this response should carry the seed + bridge: the share
+    // viewer's flag AND a folio that opted into data editing. Narrowed here so
+    // the injection sites cannot be reached with 'off'.
+    const stateWriteMode: 'anonymous' | 'signed_in' | null =
+      searchParams.get('lf_pins') === '1' && stateWrite !== 'off' ? stateWrite : null;
+
     // Draft/takedown gate — block raw file access for unpublished or
     // moderated-down folios unless the viewer is an org member (editor
     // preview). `moderation_status = 'hidden'` is a platform takedown:
@@ -953,6 +1057,13 @@ export async function GET(
         if (searchParams.get('lf_pins') === '1') {
           html = injectPinBridge(html);
         }
+        // Data-editing seed + shim — the FIRST children of the document, so the
+        // folio's own parse-time localStorage read is already served by the
+        // seeded map (spike Q2: no later message can repair that read).
+        if (stateWriteMode) {
+          html = injectStateSeed(html, await buildStateSeedJson(project, stateWriteMode, readSession));
+          forceNoStore = true;
+        }
         return new Response(html, {
           headers: applyGateHeaders({
             'Content-Type': 'text/html; charset=utf-8',
@@ -1143,6 +1254,15 @@ export async function GET(
     // Share pin bridge — last injection so nothing above can strip it.
     if (isHtml && searchParams.get('lf_pins') === '1') {
       code = injectPinBridge(code);
+    }
+    // Data-editing seed + shim — the FIRST children of the document, so the
+    // folio's own parse-time localStorage read is already served by the seeded
+    // map (spike Q2: no later message can repair that read). Token-served
+    // source-lock payloads are a normal HTML branch and are seeded too; the
+    // wrap shell is not (the payload request carries the seed instead).
+    if (isHtml && stateWriteMode) {
+      code = injectStateSeed(code, await buildStateSeedJson(project, stateWriteMode, readSession));
+      forceNoStore = true;
     }
 
     // Serve file with correct content-type — cache policy in cacheControl()

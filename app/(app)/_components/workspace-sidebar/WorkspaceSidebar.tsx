@@ -87,6 +87,7 @@ import type { SidebarSlotProps } from '@/components/app-shell/AppShellFrame';
 import type { PaidAccessConfig } from '@/lib/gating/types';
 import { PaidIndicator } from '@/components/gating/PaidIndicator';
 import { ListedIndicator } from '@/components/listing/ListedIndicator';
+import { SharedIndicator } from '@/components/share/SharedIndicator';
 import type { ListingMetadata } from '@/lib/listing/types';
 import { FONT_DISPLAY } from '@/lib/fonts';
 
@@ -108,6 +109,10 @@ interface FolioData {
   /** The caller's grant role on this folio (viewer/commenter/editor);
    *  'owner' for org folios. The "Shared folios" split reads this tag. */
   accessRole?: string | null;
+  /** People this folio is directly shared with — the sidebar's sharing badge.
+   *  Present on the caller's OWN rows on Cloud only: absent on a self-hosted
+   *  install, and absent on a row that was shared with the caller. */
+  collaboratorCount?: number;
 }
 
 interface WorkspaceData {
@@ -1650,6 +1655,10 @@ function FolioItem({
             {folio.accessRole}
           </span>
         )}
+        {/* Direct sharing — who else can open this, sitting next to whether the
+            web can. The two answer different questions and are read together,
+            which is why they share the end of the row. */}
+        <SharedIndicator count={folio.collaboratorCount} />
         {/* Publish state — rendered in BOTH states. Previously only drafts got
             a mark (a 6px dot at 25% opacity, all but invisible), which left
             published folios unmarked: "live" and "no indicator" looked

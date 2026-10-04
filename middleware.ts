@@ -30,6 +30,7 @@ export function middleware(request: NextRequest) {
       pathname === '/api/mcp' ||
       pathname === '/api/files/' + pathname.split('/')[3] + '/public' || // matches /api/files/[id]/public
       pathname === '/api/files/' + pathname.split('/')[3] + '/comments' || // matches /api/files/[id]/comments
+      pathname === '/api/files/' + pathname.split('/')[3] + '/state' || // matches /api/files/[id]/state
       pathname === '/api/files/' + pathname.split('/')[3] + '/reactions' || // matches /api/files/[id]/reactions
       pathname === '/api/files/' + pathname.split('/')[3] + '/analytics'; // matches /api/files/[id]/analytics
 

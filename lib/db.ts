@@ -196,6 +196,24 @@ export interface HTMLFile {
    * ever auto-republishes. Archived folios still count toward storage.
    */
   archivedAt?: string | null;
+  /**
+   * Who may edit the data this folio collects (the flat-file mirror of the
+   * Cloud `folios.state_write` column, which `transformFolioRecord` maps onto
+   * this field). 'off' = nobody, 'anonymous' = anyone who passed the raw
+   * gates, 'signed_in' = a session user is required. ABSENT MEANS 'off': the
+   * field is additive, so every record written before it existed — and every
+   * folio that never opted in — keeps behaving exactly as before.
+   */
+  stateWrite?: 'off' | 'anonymous' | 'signed_in';
+  /**
+   * The folio's collected client data — localStorage key → string value — and
+   * its monotonic write counter. The flat-file mirror of the Cloud
+   * `folio_state` row: Cloud reads and writes that table through
+   * `lib/folio-state.ts` only, while the OSS arm of the state route reads and
+   * writes these two fields. Absent = no collected data.
+   */
+  state?: Record<string, string>;
+  stateRev?: number;
 }
 
 /** A user's public profile */

@@ -116,6 +116,44 @@ export const DATA_URL_ANCHORED_STRICT_RE = /^data:([^;]+);base64,([A-Za-z0-9+/=]
  */
 export const DATA_URL_ANCHORED_LOOSE_RE = /^data:([^;]+);base64,(.+)$/;
 
+/**
+ * A whole base64 data URL → its decoded bytes, or null when it will not decode.
+ *
+ * Null rather than a throw, and that is the contract that matters: a caller
+ * uses this to decide whether a value is an UPLOAD, and "not decodable" has to
+ * mean "not an upload" rather than an exception. A folio save uploads images
+ * only AFTER it has already written the new version, so a throw here reports a
+ * failure for a save that in fact succeeded.
+ *
+ * The STRICT pattern gates this, not the loose one the server accepts. Strict
+ * is the narrowest of the three dialects, and narrow is the safe direction to
+ * err: a value it rejects is not lost — the caller lets it ride as text, where
+ * the server's own looser pass offloads it exactly as it would have here.
+ * A value it ACCEPTS is then handed to `atob`, whose remaining failure (a
+ * payload length base64 cannot decode) the `catch` turns back into null.
+ *
+ * What this deliberately rejects is an `asset://` pointer — the form a folio's
+ * `assets/*` entries actually hold. A pointer names bytes already in the asset
+ * store; there is nothing in it to decode, and feeding one to `atob` is exactly
+ * the throw described above.
+ */
+export function decodeBase64DataUrl(value: string): Uint8Array<ArrayBuffer> | null {
+  const match = value.match(DATA_URL_ANCHORED_STRICT_RE);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    // Over an explicit ArrayBuffer: the bare length overload widens to
+    // `Uint8Array<ArrayBufferLike>`, which is not a `BlobPart` under TS 5.7.
+    const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    // Matched the shape but the payload is not decodable (e.g. a single
+    // trailing character, which is not a valid base64 length).
+    return null;
+  }
+}
+
 /* ──────────────────────────── MIME → extension ─────────────────────── */
 
 /**

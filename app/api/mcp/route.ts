@@ -528,7 +528,7 @@ const TOOLS: Array<{ name: string; description: string; inputSchema: Record<stri
     },
     {
       name: "manage_sharing",
-      description: "Read or change a folio's sharing/visibility settings: publishing status (draft = owner-only, published = publicly accessible), private/public with access key, guest comments, and presentation mode. Call with no fields beyond project_id to read the current settings. Changing settings never creates a version.",
+      description: "Read or change a folio's sharing/visibility settings: publishing status (draft = owner-only, published = publicly accessible), private/public with access key, guest comments, presentation mode, and stateWrite — who may edit the data the folio collects (a tracker, a list, a form the folio saves). stateWrite is NOT a visibility setting: 'off' | 'anonymous' | 'signed_in' never change who can see the folio, only who can change the data it stores. Call with no fields beyond project_id to read the current settings. Changing settings never creates a version.",
       inputSchema: {
         type: "object",
         properties: {
@@ -537,7 +537,8 @@ const TOOLS: Array<{ name: string; description: string; inputSchema: Record<stri
           isPrivate: { type: "boolean", description: "Make the folio private (viewers need an access key)" },
           accessKey: { type: "string", description: "Password/access key required when private" },
           allowComments: { type: "boolean", description: "Allow guests to leave comments and reactions" },
-          presentationModeOnly: { type: "boolean", description: "Show only in fullscreen presentation mode" }
+          presentationModeOnly: { type: "boolean", description: "Show only in fullscreen presentation mode" },
+          stateWrite: { type: "string", enum: ["off", "anonymous", "signed_in"], description: "Who may edit the data this folio collects: 'off' = nobody, 'anonymous' = anyone who can open the folio, 'signed_in' = signed-in viewers only. Not a visibility setting — it never changes who can see the folio. The data lives on the owner's account." }
         },
         required: ["project_id"]
       }
@@ -826,6 +827,13 @@ export async function POST(request: Request) {
             // A runtime isOSS guard cannot hide a string from a bundle, so they
             // must be physically absent from this file.
             ...MARKETPLACE_INSTRUCTION_LINES,
+            // The collected-data row ships from THIS file, not the marketplace
+            // module: `state_write` is an OSS-safe primitive, and the
+            // marketplace instruction lines are empty in a self-hosted build —
+            // this row must not vanish with them. It is the one honest line an
+            // agent needs before it tells a human "your folio can save what
+            // viewers type".
+            "SHARING — COLLECTED DATA: a folio can collect data from its viewers (a tracker, a list, a form the folio saves). manage_sharing's stateWrite (off | anonymous | signed_in) controls who may EDIT that collected data — off = nobody, anonymous = anyone who can open the folio, signed_in = signed-in viewers only. It is NOT a visibility setting: it never changes who can see the folio. The collected data lives on the folio owner's account and counts toward their storage.",
             // Collaborator capability rows live in the same module as the
             // tools they describe, so the map cannot advertise a tool the
             // dispatcher does not have. The module names no plan tier and no

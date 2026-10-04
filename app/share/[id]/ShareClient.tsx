@@ -196,12 +196,156 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // ── Folio state relay (the parent half of the localStorage shim) ──────
+  // When the owner turned data editing on, the raw route injects
+  // public/livefolio-state-bridge.js into the folio: inside this sandboxed
+  // (opaque-origin) iframe that script shadows `localStorage` with an in-memory
+  // map and relays the whole map out over postMessage. THIS page is the only
+  // party that can reach /api/files/[id]/state — the folio has no origin and no
+  // session; the parent is same-origin with the platform and carries the cookie.
+  // Message names, payload shapes and the rev rule are FROZEN
+  // (ARCHITECTURE.html §3) and already implemented by the bridge: do not rename
+  // or reshape them here.
+  //
+  // The access key is read through a ref rather than the message effect's
+  // closure: the listener is registered once ([] deps, like the pin handler)
+  // while the key only comes into existence after a private folio is unlocked.
+  const accessKeyRef = useRef('');
+  useEffect(() => { accessKeyRef.current = accessKey; }, [accessKey]);
+  // One handshake sync per loaded document (the PINS_READY ping loop can repeat)
+  // — reset in the effect that invalidates `bridgeReady` on a document change.
+  const stateHandshakeRef = useRef(false);
+
+  /**
+   * Post one `LIVEFOLIO_STATE_SYNC` to the folio.
+   *
+   * `rev` is ONLY ever taken from a response body. Every other reply omits it on
+   * purpose: the shim drops a SYNC without a finite rev (and any rev that does
+   * not exceed what it already serves — spike §C3), so an omitted rev can never
+   * overwrite a viewer's unacknowledged write. It still carries `readOnly` +
+   * `reason`, which is the one channel by which a refusal reaches the folio's
+   * console.
+   */
+  const postStateSync = (payload: {
+    state?: Record<string, string>;
+    rev?: number;
+    readOnly: boolean;
+    reason?: string;
+  }) => {
+    const guestWindow = iframeRef.current?.contentWindow;
+    if (!guestWindow) return;
+    guestWindow.postMessage({ type: 'LIVEFOLIO_STATE_SYNC', ...payload }, '*');
+  };
+
+  /**
+   * One short human sentence for the folio console. The server's own copy wins
+   * when it sends one — it is the only writer that can tell a bad access key
+   * from an owner who turned data editing off (both are 403s).
+   */
+  const stateRefusalReason = (status: number, serverCopy?: unknown): string => {
+    if (typeof serverCopy === 'string' && serverCopy.trim()) return serverCopy.trim();
+    if (status === 401) return 'Sign in to edit this folio’s data.';
+    if (status === 403) return 'Data editing is turned off for this folio.';
+    if (status === 404) return 'This folio is not available for data editing.';
+    if (status === 413) return 'The saved data is too large (256 KB limit).';
+    if (status === 429) return 'Too many edits right now — try again in a few minutes.';
+    return 'This folio’s data could not be saved.';
+  };
+
+  /** The folio's whole localStorage map, as the bridge sends it (string values). */
+  const isStateMap = (value: unknown): value is Record<string, string> =>
+    !!value && typeof value === 'object' && !Array.isArray(value);
+
+  /**
+   * `LIVEFOLIO_STATE_PUT` → `PUT /api/files/[id]/state`, mirroring the comment
+   * POST's conventions (`accessKey` in the body; the cookies ride along).
+   * The reply's rev is the PUT response's rev — NEVER an older value.
+   */
+  const relayStatePut = async (msg: { state?: unknown; baseRev?: unknown }) => {
+    if (!id || !isStateMap(msg.state)) return;
+    if (typeof msg.baseRev !== 'number' || !Number.isFinite(msg.baseRev)) return;
+    try {
+      const res = await fetch(`/api/files/${id}/state`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state: msg.state,
+          baseRev: msg.baseRev,
+          accessKey: accessKeyRef.current || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        if (data && typeof data.rev === 'number' && Number.isFinite(data.rev)) {
+          // Echo the server's map (authoritative), or what we sent if the body
+          // carried none — never an empty object, which would wipe the folio.
+          postStateSync({
+            state: isStateMap(data.state) ? data.state : msg.state,
+            rev: data.rev,
+            readOnly: data.readOnly === true,
+          });
+        } else {
+          // A 2xx without a rev breaks the frozen contract. Reply without one so
+          // the shim keeps its local map and re-sends on the next flush, rather
+          // than adopting a state whose order we cannot prove.
+          postStateSync({ readOnly: data?.readOnly === true });
+        }
+      } else {
+        // 403 (editing off) / 401 (sign-in required) / 413 (too large) /
+        // 429 (rate-limited) — read-only + the reason for the folio console.
+        postStateSync({ readOnly: true, reason: stateRefusalReason(res.status, data?.message || data?.error) });
+      }
+    } catch {
+      // Network failure: keep the local write, send nothing. The next flush
+      // re-sends the same burst (the baseRev is still held by the shim).
+    }
+  };
+
+  /**
+   * `LIVEFOLIO_STATE_REQUEST` (and the PINS_READY handshake) →
+   * `GET /api/files/[id]/state`, key in the query exactly like the `/public`
+   * GET this component already uses.
+   */
+  const relayStateRequest = async () => {
+    if (!id) return;
+    const key = accessKeyRef.current;
+    try {
+      const res = await fetch(
+        `/api/files/${id}/state${key ? `?access_key=${encodeURIComponent(key)}` : ''}`,
+        { cache: 'no-store' }
+      );
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        if (data && typeof data.rev === 'number' && Number.isFinite(data.rev)) {
+          postStateSync({
+            state: isStateMap(data.state) ? data.state : {},
+            rev: data.rev,
+            readOnly: data.readOnly === true,
+          });
+        } else {
+          postStateSync({ readOnly: data?.readOnly === true });
+        }
+      } else if (res.status === 401 || res.status === 403 || res.status === 404) {
+        // The viewer may not read this folio's data — so they may not write it.
+        postStateSync({ readOnly: true, reason: stateRefusalReason(res.status, data?.message || data?.error) });
+      } else {
+        // Transient (429/5xx): say nothing a shim could act on. A reply with no
+        // rev is a no-op, so the folio keeps serving its last-known map.
+        postStateSync({ readOnly: false });
+      }
+    } catch {
+      /* transient — the folio keeps its local map */
+    }
+  };
+
   // Listen for messages from the guest iframe. The sandboxed iframe has an
   // OPAQUE origin ('null'), so the old origin check matched nothing — the
   // sender is authenticated by window identity (e.source) instead. Handles:
   //   PINS_READY  — the in-iframe pin bridge is up (re-sync below)
   //   PIN_DROP    — capture happened inside the folio; carries DOM context
   //   MOUSE_EDGE  — legacy edge-hover (kept for older in-iframe bridges)
+  //   STATE_PUT   — the folio's shadowed localStorage changed (relayed above)
+  //   STATE_REQUEST — the folio asks for the current state (boot/bfcache)
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       const guestWindow = iframeRef.current?.contentWindow;
@@ -211,6 +355,20 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
       if (!d || typeof d !== 'object') return;
       if (d.type === 'LIVEFOLIO_PINS_READY') {
         setBridgeReady(true);
+        // The state bridge asks for a sync at script-parse time, which can fire
+        // before this listener is mounted (the iframe is in the SSR HTML and
+        // starts loading while React is still hydrating) — the same race the
+        // pull-based PINS_PING handshake above exists for. Answering READY with
+        // a sync covers a seed that was stale or missing at parse time. Once per
+        // document: the ping loop can fire READY repeatedly.
+        if (!stateHandshakeRef.current) {
+          stateHandshakeRef.current = true;
+          void relayStateRequest();
+        }
+      } else if (d.type === 'LIVEFOLIO_STATE_PUT') {
+        void relayStatePut(d);
+      } else if (d.type === 'LIVEFOLIO_STATE_REQUEST') {
+        void relayStateRequest();
       } else if (d.type === 'LIVEFOLIO_PIN_DROP') {
         if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
         setTempPin({
@@ -266,6 +424,12 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
   // window.open links.
   // allow-same-origin stays OFF deliberately — that is the isolation this
   // sandbox exists to provide.
+  //
+  // allow-downloads is granted so a folio's own download affordances work in
+  // the shared view (the tracker's "Add to calendar" .ics button silently did
+  // nothing without it — a sandboxed document cannot trigger a download). It
+  // grants no origin, no storage and no navigation: only the ability to save a
+  // file the folio already generated.
   const allComments = (project?.comments || []) as HTMLComment[];
   const activePins = allComments.filter(
     (c) => c.filename === activeFilename && (!c.type || c.type === 'pin')
@@ -336,6 +500,8 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
   // bridge isn't up yet; the old document's messages must not count.
   useEffect(() => {
     setBridgeReady(false);
+    // The new document boots its own shim and asks for its own sync.
+    stateHandshakeRef.current = false;
   }, [activeFilename, activePreviewVersion]);
 
   // Top hover strip — reveals the auto-hiding header when the pointer is in
@@ -981,7 +1147,7 @@ export default function GuestPresentationPage({ initialProject }: { initialProje
             src={`/api/raw/${project.id}/${activeFilename}?v=${activePreviewVersion}&lf_pins=1${accessKey ? `&access_key=${encodeURIComponent(accessKey)}` : ''}`}
             className="w-full h-full border-none bg-white"
             id="presentation-guest-iframe"
-            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
             referrerPolicy="no-referrer"
             onLoad={() => setSyncTrigger(prev => prev + 1)}
           />

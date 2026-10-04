@@ -294,6 +294,18 @@ export async function handleCreateProject(args: any, request?: Request) {
     const dbRecord = transformToFolioRecord(newProject, orgId);
     delete dbRecord.id;
 
+    // `created_by` — the root cause of the NULL-owned folios. This path built
+    // the insert without it, so every folio created here counted against
+    // nobody's storage and was invisible to the owner's per-user grouping. The
+    // migration backfilled history; this stops new ones. The identity is the
+    // authenticated caller (x-user-id from middleware — session or workspace
+    // API key) with the org Owner as the fallback for OAuth callers, i.e. the
+    // same resolver `duplicate_project` and every other user-scoped handler
+    // uses, and the same identity the quota check above already attributes to.
+    const createdBy = await resolveActingUserId(orgId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- created_by column is not part of Partial<FolioRecord> but is set server-side for usage attribution
+    (dbRecord as any).created_by = createdBy;
+
     const { data, error } = await supabaseAdmin
       .from('folios')
       .insert(dbRecord)

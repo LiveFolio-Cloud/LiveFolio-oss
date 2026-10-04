@@ -11,7 +11,7 @@ import { sanitizeListing, listingWriteGuard, listingWriteGuardResponse } from '@
 import type { ListingMetadata } from '@/lib/listing/types';
 import { slugifyFolioTitle } from '@/lib/folio-slug';
 import { err } from '@/lib/api/respond';
-import { listGrantedFolios, type GrantRole } from './_lib/role-gate';
+import { countCollaboratorsByFolio, listGrantedFolios, type GrantRole } from './_lib/role-gate';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -151,6 +151,18 @@ export async function GET(request: Request) {
         })),
     ];
 
+    // How many people each of the caller's OWN folios is shared with, for the
+    // sidebar's sharing badge. Owner rows only: on a folio shared WITH the
+    // caller the count would be "1" — themselves — and the row already carries
+    // their role, so the badge would say nothing new.
+    //
+    // One query for every folio in the list, not one per row. Cloud only: the
+    // grant table has no counterpart in the self-hosted tree, and the twin of
+    // this import answers an empty map, so both builds run the same line.
+    const shareCounts = isCloud
+      ? await countCollaboratorsByFolio(orgRows.map((row) => String(row.id)))
+      : new Map<string, number>();
+
     const payload = rows.map(({ row, accessRole }) => ({
       ...transformFolioRecord(row),
       // The caller's effective role for THIS row: `owner` (org membership) or
@@ -159,6 +171,12 @@ export async function GET(request: Request) {
       // payload without the field, e.g. from an older client or OSS — in the
       // org list.
       accessRole,
+      // Direct sharing, read from the grant table — never from the retired
+      // email array below, which a revoke does not rewrite. See
+      // `countCollaboratorsByFolio`.
+      ...(accessRole === 'owner'
+        ? { collaboratorCount: shareCounts.get(String(row.id)) ?? 0 }
+        : {}),
       // Invariant 5: the retired email array is an owner-side record. It rides
       // in the view's row, so a granted reader would otherwise be handed the
       // addresses of everyone else on the folio. Owners keep today's payload.
