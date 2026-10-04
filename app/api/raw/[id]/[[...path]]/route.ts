@@ -232,6 +232,82 @@ function inlinePrivateSubresources(html: string, version: HTMLVersion, servedFil
   return out;
 }
 
+// ── Fresh gate fields (cross-process correctness) ────────────────────
+// The full-row `projectMemoryCache` is PER INSTANCE with a 10-minute TTL, and
+// the settings paths that flip gate state — manage_sharing, the share menu —
+// invalidate only the instance that handled the write. Everything downstream
+// that decides what a viewer may SEE (draft / private / paid gates) or what a
+// response CARRIES (the state seed + bridge, keyed on `state_write`) must not
+// serve a ten-minute-old answer on the other instances. So the small gate
+// columns are re-read on every request — a primary-key lookup of a handful of
+// scalars — and merged over the cached row, while the big columns (versions,
+// assets) stay cached. This closes the measured window in which a state_write
+// flip took up to 10 minutes to reach /api/raw on another process.
+
+const GATE_FIELDS_SELECT =
+  'id, state_write, status, is_private, access_key, moderation_status, archived_at, project_id, organization_id, paid_access';
+
+/** The gate-row shape as PostgREST returns it (only the selected columns). */
+export interface GateRow {
+  id?: string;
+  state_write?: string | null;
+  status?: string | null;
+  is_private?: boolean | null;
+  access_key?: string | null;
+  moderation_status?: string | null;
+  archived_at?: string | null;
+  project_id?: string | null;
+  organization_id?: string | null;
+  paid_access?: unknown;
+}
+
+/**
+ * Map a fresh gate row onto the folio record's own field names — mirroring
+ * `transformFolioRecord` exactly (a divergence here would make the cached and
+ * fresh answers disagree about what a field means). Pure; exported for tests.
+ */
+export function mapGateFields(row: GateRow): Partial<HTMLFile> {
+  return {
+    // isStateWriteMode guards the same way transform does; anything unknown
+    // reads as `undefined`, which every consumer treats as 'off'.
+    stateWrite: isStateWriteMode(row.state_write) ? row.state_write : undefined,
+    // Same cast the transform performs (`transformFolioRecord`): the column is
+    // free-text; only 'draft' is meaningful and everything else is published.
+    status: (row.status as 'draft' | 'published') || 'published',
+    isPrivate: !!row.is_private,
+    accessKey: row.access_key || undefined,
+    moderationStatus: row.moderation_status === 'hidden' ? 'hidden' : 'ok',
+    archivedAt: row.archived_at ?? undefined,
+    projectId: row.project_id ?? null,
+    // `organization_id?: string` on HTMLFile — undefined, not null (every
+    // consumer coalesces with `?? null` at the use site).
+    organization_id: row.organization_id ?? undefined,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the paid config is JSONB; its shape is validated where it is consumed
+    paidAccess: (row.paid_access ?? null) as any,
+  };
+}
+
+/**
+ * Read one folio's gate fields fresh. Returns null — never throws — on OSS,
+ * on a missing client, on any query failure, or for a row that no longer
+ * exists; the caller then keeps the cached values, which is precisely the
+ * behaviour that preceded this read.
+ */
+export async function readFreshGateFields(folioId: string): Promise<Partial<HTMLFile> | null> {
+  if (isOSS || !supabaseAdmin) return null;
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('folios')
+      .select(GATE_FIELDS_SELECT)
+      .eq('id', folioId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return mapGateFields(data as GateRow);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The serialized seed for one folio, ready to inline.
  *
@@ -772,9 +848,17 @@ export async function GET(
         }
 
         project = transformFolioRecord(folio);
-        
+
         projectMemoryCache.set(id, project);
       }
+
+      // Gate fields read fresh on EVERY request, merged over the (possibly
+      // cached) row — see the block comment on readFreshGateFields. The big
+      // columns stay served by the cache; only the scalars the gates and the
+      // state-seed decision depend on are re-read, so a settings flip is
+      // effective on all instances immediately.
+      const freshGates = await readFreshGateFields(id);
+      if (freshGates) project = { ...project, ...freshGates };
 
       // Security Access Control Check
       if (project.isPrivate) {
