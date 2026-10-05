@@ -92,10 +92,17 @@ export function canWriteField(role: FolioRole, _field?: string): boolean {
   return role === 'owner';
 }
 
-/** Nothing is shared with anyone here. */
+/**
+ * Nothing is shared with anyone here.
+ *
+ * The signature is the Cloud one — the ref carries the sharer fields the
+ * sidebar renders ("by Heba") even though they are always absent in a
+ * self-hosted install. Keep the shapes identical: the shipped list route
+ * reads `sharedBy` off these refs on BOTH trees.
+ */
 export async function listGrantedFolios(
   _userId?: string
-): Promise<{ folio_id: string; role: GrantRole }[]> {
+): Promise<{ folio_id: string; role: GrantRole; invited_by?: string | null; sharedBy?: string | null }[]> {
   return [];
 }
 
