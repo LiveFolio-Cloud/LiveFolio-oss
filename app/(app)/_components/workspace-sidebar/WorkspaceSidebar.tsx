@@ -109,6 +109,9 @@ interface FolioData {
   /** The caller's grant role on this folio (viewer/commenter/editor);
    *  'owner' for org folios. The "Shared folios" split reads this tag. */
   accessRole?: string | null;
+  /** Who shared it — a display name resolved by the list union, present on
+   *  granted rows only. The "Shared folios" group renders it on the row. */
+  sharedBy?: string | null;
   /** People this folio is directly shared with — the sidebar's sharing badge.
    *  Present on the caller's OWN rows on Cloud only: absent on a self-hosted
    *  install, and absent on a row that was shared with the caller. */
@@ -1410,16 +1413,31 @@ export function WorkspaceSidebar({ collapsed, onOpenSettings, onCloseDrawer }: W
           className="fixed z-[450] w-44 py-1 rounded-xl bg-white shadow-xl ring-1 ring-black/5 dark:bg-[#171714] dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100"
           style={menuAnchorStyle(menuPosition)}
         >
-          <button
-            onClick={() => {
-              setMoveFolio(folios.find((f) => f.id === openMenuId) || null);
-              setOpenMenuId(null);
-              setMenuPosition(null);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] font-medium text-ink/70 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10  text-left rounded-lg transition-colors cursor-pointer"
-          >
-            <FolderInput size={12} /> Move to workspace
-          </button>
+          {(folios.find((x) => x.id === openMenuId)?.accessRole ?? 'owner') === 'owner' ? (
+            <button
+              onClick={() => {
+                setMoveFolio(folios.find((f) => f.id === openMenuId) || null);
+                setOpenMenuId(null);
+                setMenuPosition(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] font-medium text-ink/70 hover:bg-[#0F0F0D]/5 dark:hover:bg-[#F4F4F0]/10  text-left rounded-lg transition-colors cursor-pointer"
+            >
+              <FolderInput size={12} /> Move to workspace
+            </button>
+          ) : (
+            /* A granted folio lives in the OWNER's org — the move API requires
+               the folio and the workspace to share an org, so offering the
+               control would be offering a guaranteed failure. Kept visible and
+               disabled so the reason is discoverable, not silent. */
+            <button
+              type="button"
+              disabled
+              title="Shared folios stay in the owner's workspace — a folio shared with you can't be moved into your workspaces."
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] font-medium text-ink/35 text-left rounded-lg cursor-not-allowed"
+            >
+              <FolderInput size={12} /> Move to workspace
+            </button>
+          )}
           <button
             onClick={() => {
               setOpenMenuId(null);
@@ -1653,6 +1671,16 @@ function FolioItem({
             )}
           >
             {folio.accessRole}
+          </span>
+        )}
+        {/* Who shared it — the role badge says what you may do; this says whose
+            folio it is. Granted rows only; org rows have no one to name. */}
+        {folio.accessRole && folio.accessRole !== 'owner' && folio.sharedBy && (
+          <span
+            className="shrink-0 max-w-[84px] truncate text-[9px] font-medium text-ink/40"
+            title={`Shared by ${folio.sharedBy}`}
+          >
+            by {folio.sharedBy}
           </span>
         )}
         {/* Direct sharing — who else can open this, sitting next to whether the

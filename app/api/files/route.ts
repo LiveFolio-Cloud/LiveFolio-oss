@@ -72,6 +72,11 @@ export async function GET(request: Request) {
     const grantedRoleById = new Map<string, GrantRole>(
       grants.map((entry) => [entry.folio_id, entry.role])
     );
+    // Who shared each granted folio — the sidebar row renders it ("by Heba");
+    // the recipient has no other way to tell whose folio this is.
+    const grantedSharedById = new Map<string, string | null>(
+      grants.map((entry) => [entry.folio_id, entry.sharedBy ?? null])
+    );
 
     // Org folios. The query is scoped to the org the caller ACTUALLY belongs
     // to — `orgId` is re-derived from the memberships table by
@@ -181,6 +186,9 @@ export async function GET(request: Request) {
       // in the view's row, so a granted reader would otherwise be handed the
       // addresses of everyone else on the folio. Owners keep today's payload.
       ...(accessRole === 'owner' ? {} : { collaborators: [] as string[] }),
+      // The sharer's display name, next to the role badge the row already
+      // carries — "editor" says what you may do; this says whose folio it is.
+      ...(accessRole === 'owner' ? {} : { sharedBy: grantedSharedById.get(String(row.id)) ?? null }),
     }));
 
     // The org query is ordered by `updated_at` desc; the union has to re-apply

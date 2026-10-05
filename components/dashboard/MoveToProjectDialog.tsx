@@ -31,6 +31,7 @@ export default function MoveToProjectDialog({
   onProjectsChange,
 }: MoveToProjectDialogProps) {
   const [moving, setMoving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -38,6 +39,7 @@ export default function MoveToProjectDialog({
   useEffect(() => {
     if (isOpen) {
       setMoving(null);
+      setError(null);
       setIsCreating(false);
       setNewName('');
     }
@@ -55,23 +57,39 @@ export default function MoveToProjectDialog({
 
   const handleMove = async (projectId: string | null) => {
     setMoving(projectId);
+    setError(null);
     try {
-      if (projectId) {
-        await fetch(`/api/projects/${projectId}/folios`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folioId }),
-        });
-      } else {
-        await fetch(`/api/files/${folioId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: null }),
-        });
+      // The response used to be discarded: a refusal (a folio from another
+      // org, an archived workspace) closed the dialog as if it had worked —
+      // the classic "I clicked it and nothing happened". Every outcome is
+      // surfaced now.
+      const res = projectId
+        ? await fetch(`/api/projects/${projectId}/folios`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folioId }),
+          })
+        : await fetch(`/api/files/${folioId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: null }),
+          });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(
+          res.status === 404
+            ? "Folios shared with you stay in the owner's workspace — they can't be moved into your workspaces."
+            : data?.message || data?.error || 'Could not move this folio. Please try again.'
+        );
+        setMoving(null);
+        return;
       }
+
       onMoved();
       onClose();
     } catch {
+      setError('Could not reach the server. Please try again.');
       setMoving(null);
     }
   };
@@ -121,6 +139,14 @@ export default function MoveToProjectDialog({
           <p className="px-4 pb-2 text-[10px] font-medium text-[#0F0F0D]/40 dark:text-[#F4F4F0]/40 font-mono truncate">
             "{folioTitle}"
           </p>
+        )}
+
+        {/* A refused move, said out loud — the dialog used to close silently
+            on any response, so a refusal was indistinguishable from success. */}
+        {error && (
+          <div className="mx-4 mb-2 rounded-lg bg-[#FF3B00]/10 px-3 py-2 text-[11px] font-medium leading-snug text-[#FF3B00]">
+            {error}
+          </div>
         )}
 
         {/* Project list */}

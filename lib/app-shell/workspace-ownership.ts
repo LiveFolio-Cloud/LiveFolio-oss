@@ -34,6 +34,8 @@ export interface OwnableWorkspace {
 export interface GrantedFolio {
   id: string;
   accessRole?: string | null;
+  /** Who shared it (display name), stamped by the list union on granted rows. */
+  sharedBy?: string | null;
 }
 
 export interface WorkspaceSplit<T> {
